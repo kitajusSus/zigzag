@@ -169,6 +169,51 @@ pub const Border = struct {
         .middle_bottom = "┴",
         .cross = "┼",
     };
+
+    /// Inner half block border (uses inner half-block characters)
+    pub const inner_half_block = BorderChars{
+        .top_left = "▗",
+        .top_right = "▖",
+        .bottom_left = "▝",
+        .bottom_right = "▘",
+        .horizontal = "▄",
+        .vertical = "▐",
+        .middle_left = "▐",
+        .middle_right = "▌",
+        .middle_top = "▄",
+        .middle_bottom = "▀",
+        .cross = "█",
+    };
+
+    /// Outer half block border (uses outer half-block characters)
+    pub const outer_half_block = BorderChars{
+        .top_left = "▛",
+        .top_right = "▜",
+        .bottom_left = "▙",
+        .bottom_right = "▟",
+        .horizontal = "▀",
+        .vertical = "▌",
+        .middle_left = "▌",
+        .middle_right = "▐",
+        .middle_top = "▀",
+        .middle_bottom = "▄",
+        .cross = "█",
+    };
+
+    /// Markdown-style border (uses pipe and dashes)
+    pub const markdown = BorderChars{
+        .top_left = "|",
+        .top_right = "|",
+        .bottom_left = "|",
+        .bottom_right = "|",
+        .horizontal = "-",
+        .vertical = "|",
+        .middle_left = "|",
+        .middle_right = "|",
+        .middle_top = "|",
+        .middle_bottom = "|",
+        .cross = "|",
+    };
 };
 
 /// Sides specification for borders

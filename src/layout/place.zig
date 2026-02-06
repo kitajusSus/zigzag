@@ -243,6 +243,104 @@ pub fn overlay(
     return result.toOwnedSlice();
 }
 
+/// Place content with horizontal positioning only (height inferred from content)
+pub fn placeHorizontal(
+    allocator: std.mem.Allocator,
+    width: usize,
+    hpos: HPosition,
+    content: []const u8,
+) ![]const u8 {
+    const content_height = measure.height(content);
+    return place(allocator, width, content_height, hpos, .top, content);
+}
+
+/// Place content with vertical positioning only (width inferred from content)
+pub fn placeVertical(
+    allocator: std.mem.Allocator,
+    height: usize,
+    vpos: VPosition,
+    content: []const u8,
+) ![]const u8 {
+    const content_width = measure.maxLineWidth(content);
+    return place(allocator, content_width, height, .left, vpos, content);
+}
+
+/// Position content using float coordinates (0.0 = left/top, 0.5 = center, 1.0 = right/bottom)
+pub fn placeFloat(
+    allocator: std.mem.Allocator,
+    width: usize,
+    height: usize,
+    hpos: f32,
+    vpos: f32,
+    content: []const u8,
+) ![]const u8 {
+    const content_width = measure.maxLineWidth(content);
+    const content_height = measure.height(content);
+
+    // If content is larger than box, just return it
+    if (content_width >= width and content_height >= height) {
+        return try allocator.dupe(u8, content);
+    }
+
+    var result = std.array_list.Managed(u8).init(allocator);
+    const writer = result.writer();
+
+    // Calculate offsets from float positions
+    const h_space = if (width > content_width) width - content_width else 0;
+    const v_space = if (height > content_height) height - content_height else 0;
+
+    const clamped_h = @max(0.0, @min(1.0, hpos));
+    const clamped_v = @max(0.0, @min(1.0, vpos));
+
+    const left_padding: usize = @intFromFloat(@as(f32, @floatFromInt(h_space)) * clamped_h);
+    const top_padding: usize = @intFromFloat(@as(f32, @floatFromInt(v_space)) * clamped_v);
+    const bottom_padding = v_space - top_padding;
+
+    // Write top padding
+    for (0..top_padding) |_| {
+        for (0..width) |_| {
+            try writer.writeByte(' ');
+        }
+        try writer.writeByte('\n');
+    }
+
+    // Write content lines
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    var first_line = true;
+    while (lines.next()) |line| {
+        if (!first_line) try writer.writeByte('\n');
+        first_line = false;
+
+        // Left padding
+        for (0..left_padding) |_| {
+            try writer.writeByte(' ');
+        }
+
+        // Content
+        try writer.writeAll(line);
+
+        // Right padding
+        const line_width = measure.width(line);
+        const right_pad = if (width > left_padding + line_width)
+            width - left_padding - line_width
+        else
+            0;
+        for (0..right_pad) |_| {
+            try writer.writeByte(' ');
+        }
+    }
+
+    // Write bottom padding
+    for (0..bottom_padding) |_| {
+        try writer.writeByte('\n');
+        for (0..width) |_| {
+            try writer.writeByte(' ');
+        }
+    }
+
+    return result.toOwnedSlice();
+}
+
 test "place center" {
     const testing = std.testing;
     const alloc = testing.allocator;

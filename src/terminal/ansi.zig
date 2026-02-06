@@ -39,6 +39,10 @@ pub const bracketed_paste_disable = CSI ++ "?2004l";
 pub const sync_start = CSI ++ "?2026h";
 pub const sync_end = CSI ++ "?2026l";
 
+// Kitty keyboard protocol
+pub const kitty_keyboard_enable = CSI ++ ">1u";
+pub const kitty_keyboard_disable = CSI ++ "<u";
+
 /// Move cursor to position (1-indexed)
 pub fn cursorTo(writer: anytype, row: u16, col: u16) !void {
     try writer.print(CSI ++ "{d};{d}H", .{ row, col });

@@ -32,6 +32,12 @@ pub const TextInput = struct {
     // Validation
     validate_fn: ?*const fn ([]const u8) bool,
 
+    // Suggestions/autocomplete
+    suggestions: []const []const u8,
+    current_suggestion_idx: usize,
+    show_suggestions: bool,
+    suggestion_style: style.Style,
+
     pub const EchoMode = enum {
         normal,
         password,
@@ -72,6 +78,15 @@ pub const TextInput = struct {
             },
             .focused = true,
             .validate_fn = null,
+            .suggestions = &.{},
+            .current_suggestion_idx = 0,
+            .show_suggestions = true,
+            .suggestion_style = blk2: {
+                var s2 = style.Style{};
+                s2 = s2.dim(true);
+                s2 = s2.inline_style(true);
+                break :blk2 s2;
+            },
         };
     }
 
@@ -139,9 +154,46 @@ pub const TextInput = struct {
         return true;
     }
 
+    /// Set suggestion list
+    pub fn setSuggestions(self: *TextInput, list: []const []const u8) void {
+        self.suggestions = list;
+        self.current_suggestion_idx = 0;
+    }
+
+    /// Get current matching suggestion
+    pub fn currentSuggestion(self: *const TextInput) ?[]const u8 {
+        if (self.suggestions.len == 0 or self.value.items.len == 0) return null;
+        const val = self.value.items;
+        var match_count: usize = 0;
+        for (self.suggestions) |s| {
+            if (s.len > val.len and std.mem.startsWith(u8, s, val)) {
+                if (match_count == self.current_suggestion_idx) {
+                    return s;
+                }
+                match_count += 1;
+            }
+        }
+        return null;
+    }
+
     /// Handle a key event
     pub fn handleKey(self: *TextInput, key: keys.KeyEvent) void {
         if (!self.focused) return;
+
+        // Alt+arrow for word movement
+        if (key.modifiers.alt) {
+            switch (key.key) {
+                .left => {
+                    self.moveCursorWordLeft();
+                    return;
+                },
+                .right => {
+                    self.moveCursorWordRight();
+                    return;
+                },
+                else => {},
+            }
+        }
 
         if (key.modifiers.ctrl) {
             switch (key.key) {
@@ -170,6 +222,14 @@ pub const TextInput = struct {
             .right => self.moveCursorRight(),
             .home => self.cursor = 0,
             .end => self.cursor = self.value.items.len,
+            .tab => {
+                // Accept current suggestion
+                if (self.currentSuggestion()) |suggestion| {
+                    self.value.clearRetainingCapacity();
+                    self.value.appendSlice(suggestion) catch {};
+                    self.cursor = self.value.items.len;
+                }
+            },
             else => {},
         }
     }
@@ -248,6 +308,30 @@ pub const TextInput = struct {
 
         const byte_len = std.unicode.utf8ByteSequenceLength(self.value.items[self.cursor]) catch 1;
         self.cursor = @min(self.cursor + byte_len, self.value.items.len);
+    }
+
+    fn moveCursorWordLeft(self: *TextInput) void {
+        if (self.cursor == 0) return;
+        // Skip whitespace
+        while (self.cursor > 0 and self.value.items[self.cursor - 1] == ' ') {
+            self.cursor -= 1;
+        }
+        // Skip word chars
+        while (self.cursor > 0 and self.value.items[self.cursor - 1] != ' ') {
+            self.cursor -= 1;
+        }
+    }
+
+    fn moveCursorWordRight(self: *TextInput) void {
+        if (self.cursor >= self.value.items.len) return;
+        // Skip word chars
+        while (self.cursor < self.value.items.len and self.value.items[self.cursor] != ' ') {
+            self.cursor += 1;
+        }
+        // Skip whitespace
+        while (self.cursor < self.value.items.len and self.value.items[self.cursor] == ' ') {
+            self.cursor += 1;
+        }
     }
 
     fn charCount(self: *const TextInput) usize {
@@ -331,6 +415,17 @@ pub const TextInput = struct {
             // Cursor at end - show cursor on space
             const cursor_rendered = try self.cursor_style.render(allocator, " ");
             try writer.writeAll(cursor_rendered);
+        }
+
+        // Show ghost text for current suggestion
+        if (self.show_suggestions) {
+            if (self.currentSuggestion()) |suggestion| {
+                if (suggestion.len > self.value.items.len) {
+                    const ghost = suggestion[self.value.items.len..];
+                    const ghost_rendered = try self.suggestion_style.render(allocator, ghost);
+                    try writer.writeAll(ghost_rendered);
+                }
+            }
         }
     }
 };

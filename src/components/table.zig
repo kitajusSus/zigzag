@@ -6,6 +6,7 @@ const style_mod = @import("../style/style.zig");
 const border_mod = @import("../style/border.zig");
 const Color = @import("../style/color.zig").Color;
 const measure = @import("../layout/measure.zig");
+const keys = @import("../input/keys.zig");
 
 pub fn Table(comptime num_cols: usize) type {
     return struct {
@@ -27,6 +28,19 @@ pub fn Table(comptime num_cols: usize) type {
         cell_style: style_mod.Style,
         border_style: style_mod.Style,
         alt_row_style: ?style_mod.Style,
+        cursor_row_style: style_mod.Style,
+
+        // Interactive state
+        cursor_row: usize,
+        focused: bool,
+        y_offset: usize,
+        visible_rows: u16,
+
+        // Row borders
+        show_row_borders: bool,
+
+        // Per-cell styling callback
+        style_func: ?*const fn (usize, usize) ?style_mod.Style,
 
         const Self = @This();
 
@@ -64,6 +78,19 @@ pub fn Table(comptime num_cols: usize) type {
                     break :blk s;
                 },
                 .alt_row_style = null,
+                .cursor_row_style = blk2: {
+                    var s2 = style_mod.Style{};
+                    s2 = s2.bold(true);
+                    s2 = s2.reverse(true);
+                    s2 = s2.inline_style(true);
+                    break :blk2 s2;
+                },
+                .cursor_row = 0,
+                .focused = false,
+                .y_offset = 0,
+                .visible_rows = 10,
+                .show_row_borders = false,
+                .style_func = null,
             };
         }
 
@@ -108,6 +135,96 @@ pub fn Table(comptime num_cols: usize) type {
         /// Set border style
         pub fn setBorder(self: *Self, border: border_mod.BorderChars) void {
             self.border_chars = border;
+        }
+
+        /// Focus the table for interactive mode
+        pub fn focus(self: *Self) void {
+            self.focused = true;
+        }
+
+        /// Blur the table
+        pub fn blur(self: *Self) void {
+            self.focused = false;
+        }
+
+        /// Get the currently selected row index
+        pub fn selectedRow(self: *const Self) usize {
+            return self.cursor_row;
+        }
+
+        /// Handle key event for navigation
+        pub fn handleKey(self: *Self, key: keys.KeyEvent) void {
+            if (!self.focused) return;
+
+            switch (key.key) {
+                .up => {
+                    if (self.cursor_row > 0) self.cursor_row -= 1;
+                    self.ensureRowVisible();
+                },
+                .down => {
+                    if (self.rows.items.len > 0 and self.cursor_row < self.rows.items.len - 1) {
+                        self.cursor_row += 1;
+                    }
+                    self.ensureRowVisible();
+                },
+                .page_up => {
+                    if (self.cursor_row >= self.visible_rows) {
+                        self.cursor_row -= self.visible_rows;
+                    } else {
+                        self.cursor_row = 0;
+                    }
+                    self.ensureRowVisible();
+                },
+                .page_down => {
+                    self.cursor_row += self.visible_rows;
+                    if (self.rows.items.len > 0 and self.cursor_row >= self.rows.items.len) {
+                        self.cursor_row = self.rows.items.len - 1;
+                    }
+                    self.ensureRowVisible();
+                },
+                .home => {
+                    self.cursor_row = 0;
+                    self.y_offset = 0;
+                },
+                .end => {
+                    if (self.rows.items.len > 0) {
+                        self.cursor_row = self.rows.items.len - 1;
+                    }
+                    self.ensureRowVisible();
+                },
+                .char => |c| switch (c) {
+                    'j' => {
+                        if (self.rows.items.len > 0 and self.cursor_row < self.rows.items.len - 1) {
+                            self.cursor_row += 1;
+                        }
+                        self.ensureRowVisible();
+                    },
+                    'k' => {
+                        if (self.cursor_row > 0) self.cursor_row -= 1;
+                        self.ensureRowVisible();
+                    },
+                    'g' => {
+                        self.cursor_row = 0;
+                        self.y_offset = 0;
+                    },
+                    'G' => {
+                        if (self.rows.items.len > 0) {
+                            self.cursor_row = self.rows.items.len - 1;
+                        }
+                        self.ensureRowVisible();
+                    },
+                    else => {},
+                },
+                else => {},
+            }
+        }
+
+        fn ensureRowVisible(self: *Self) void {
+            if (self.cursor_row < self.y_offset) {
+                self.y_offset = self.cursor_row;
+            } else if (self.cursor_row >= self.y_offset + self.visible_rows) {
+                self.y_offset = self.cursor_row - self.visible_rows + 1;
+            }
         }
 
         /// Calculate actual column widths
@@ -160,15 +277,38 @@ pub fn Table(comptime num_cols: usize) type {
                 }
             }
 
-            // Data rows
-            for (self.rows.items, 0..) |row, row_idx| {
-                const row_style = if (self.alt_row_style != null and row_idx % 2 == 1)
+            // Data rows (with viewport if focused)
+            const start_row = if (self.focused) self.y_offset else 0;
+            const end_row = if (self.focused)
+                @min(start_row + self.visible_rows, self.rows.items.len)
+            else
+                self.rows.items.len;
+
+            for (start_row..end_row) |row_idx| {
+                const row = self.rows.items[row_idx];
+                const row_style = if (self.focused and row_idx == self.cursor_row)
+                    self.cursor_row_style
+                else if (self.style_func) |func| blk: {
+                    if (func(row_idx, 0)) |s| {
+                        break :blk s;
+                    }
+                    break :blk if (self.alt_row_style != null and row_idx % 2 == 1)
+                        self.alt_row_style.?
+                    else
+                        self.cell_style;
+                } else if (self.alt_row_style != null and row_idx % 2 == 1)
                     self.alt_row_style.?
                 else
                     self.cell_style;
 
                 try self.writeRow(writer, allocator, row, widths, row_style);
-                if (row_idx < self.rows.items.len - 1 or self.show_border) {
+                if (row_idx < end_row - 1 or self.show_border) {
+                    try writer.writeByte('\n');
+                }
+
+                // Row borders between data rows
+                if (self.show_row_borders and row_idx < end_row - 1) {
+                    try self.writeBorderLine(writer, allocator, widths, .middle);
                     try writer.writeByte('\n');
                 }
             }

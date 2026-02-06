@@ -58,6 +58,8 @@ pub const command = @import("core/command.zig");
 pub const Context = @import("core/context.zig").Context;
 pub const Options = @import("core/context.zig").Options;
 pub const msg = @import("core/message.zig");
+pub const log = @import("core/log.zig");
+pub const Logger = log.Logger;
 
 // Terminal
 pub const terminal = @import("terminal/terminal.zig");
@@ -103,6 +105,12 @@ pub const components = struct {
     pub const Help = @import("components/help.zig").Help;
     pub const Timer = @import("components/timer.zig").Timer;
     pub const FilePicker = @import("components/file_picker.zig").FilePicker;
+    pub const Tree = @import("components/tree.zig").Tree;
+    pub const StyledList = @import("components/styled_list.zig").StyledList;
+    pub const Sparkline = @import("components/sparkline.zig").Sparkline;
+    pub const notification = @import("components/notification.zig");
+    pub const Notification = notification.Notification;
+    pub const Confirm = @import("components/confirm.zig").Confirm;
 };
 
 // Re-export commonly used components at top level
@@ -113,6 +121,16 @@ pub const Viewport = components.Viewport;
 pub const Progress = components.Progress;
 pub const Spinner = components.Spinner;
 pub const Table = components.Table;
+pub const Tree = components.Tree;
+pub const StyledList = components.StyledList;
+pub const Sparkline = components.Sparkline;
+pub const Notification = components.Notification;
+pub const Confirm = components.Confirm;
+
+// Keybinding management
+pub const keybinding = @import("components/keybinding.zig");
+pub const KeyBinding = keybinding.KeyBinding;
+pub const KeyMap = keybinding.KeyMap;
 
 // Utility functions
 pub fn joinHorizontal(allocator: std.mem.Allocator, parts: []const []const u8) ![]const u8 {
@@ -130,6 +148,36 @@ pub fn width(str: []const u8) usize {
 pub fn height(str: []const u8) usize {
     return measure.height(str);
 }
+
+pub fn placeHorizontal(allocator: std.mem.Allocator, w: usize, hpos: place.HPosition, content: []const u8) ![]const u8 {
+    return place.placeHorizontal(allocator, w, hpos, content);
+}
+
+pub fn placeVertical(allocator: std.mem.Allocator, h: usize, vpos: place.VPosition, content: []const u8) ![]const u8 {
+    return place.placeVertical(allocator, h, vpos, content);
+}
+
+pub fn placeFloat(allocator: std.mem.Allocator, w: usize, h: usize, hpos: f32, vpos: f32, content: []const u8) ![]const u8 {
+    return place.placeFloat(allocator, w, h, hpos, vpos, content);
+}
+
+// Color utilities
+pub const ColorProfile = color.ColorProfile;
+pub const AdaptiveColor = color.AdaptiveColor;
+pub const CompleteColor = color.CompleteColor;
+pub const CompleteAdaptiveColor = color.CompleteAdaptiveColor;
+
+// Style utilities
+pub const StyleRange = style.StyleRange;
+pub const renderWithRanges = style.renderWithRanges;
+pub const renderWithHighlights = style.renderWithHighlights;
+pub const transforms = style.transforms;
+pub const compress = @import("style/compress.zig");
+pub const StyleState = compress.StyleState;
+pub const compressAnsi = compress.compressAnsi;
+
+// Progress helpers
+pub const interpolateColor = @import("components/progress.zig").interpolateColor;
 
 test {
     std.testing.refAllDecls(@This());

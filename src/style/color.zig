@@ -261,3 +261,74 @@ pub const CompleteColor = struct {
     fg: Color = .none,
     bg: Color = .none,
 };
+
+/// Complete adaptive color that changes based on terminal background
+pub const CompleteAdaptiveColor = struct {
+    light: CompleteColor,
+    dark: CompleteColor,
+
+    pub fn resolve(self: CompleteAdaptiveColor, is_dark: bool) CompleteColor {
+        return if (is_dark) self.dark else self.light;
+    }
+};
+
+/// Color profile representing terminal color capabilities
+pub const ColorProfile = enum {
+    ascii,
+    ansi,
+    ansi256,
+    true_color,
+
+    /// Detect terminal color profile from environment
+    pub fn detect() ColorProfile {
+        // Check NO_COLOR
+        if (std.posix.getenv("NO_COLOR")) |_| {
+            return .ascii;
+        }
+
+        // Check for true color support
+        if (std.posix.getenv("COLORTERM")) |ct| {
+            if (std.mem.eql(u8, ct, "truecolor") or std.mem.eql(u8, ct, "24bit")) {
+                return .true_color;
+            }
+        }
+
+        // Check for 256 color support
+        if (std.posix.getenv("TERM")) |term| {
+            if (std.mem.indexOf(u8, term, "256color") != null) {
+                return .ansi256;
+            }
+        }
+
+        return .ansi;
+    }
+
+    /// Check if this profile supports true color
+    pub fn supportsTrueColor(self: ColorProfile) bool {
+        return self == .true_color;
+    }
+
+    /// Check if this profile supports 256 colors
+    pub fn supports256(self: ColorProfile) bool {
+        return self == .true_color or self == .ansi256;
+    }
+
+    /// Check if this profile supports any color
+    pub fn supportsColor(self: ColorProfile) bool {
+        return self != .ascii;
+    }
+};
+
+/// Detect if terminal has a dark background
+pub fn hasDarkBackground() bool {
+    if (std.posix.getenv("COLORFGBG")) |val| {
+        // Format: "foreground;background"
+        if (std.mem.lastIndexOfScalar(u8, val, ';')) |idx| {
+            const bg_str = val[idx + 1 ..];
+            const bg_num = std.fmt.parseInt(u8, bg_str, 10) catch return true;
+            // Low numbers typically mean dark background
+            return bg_num < 8;
+        }
+    }
+    return true; // Default to dark
+}

@@ -41,6 +41,10 @@ pub fn List(comptime T: type) type {
         multi_select: bool,
         wrap_around: bool,
 
+        // Status
+        status_message: ?[]const u8,
+        show_item_count: bool,
+
         const Self = @This();
 
         pub const Item = struct {
@@ -108,6 +112,8 @@ pub fn List(comptime T: type) type {
                 .unselected_symbol = "[ ] ",
                 .multi_select = false,
                 .wrap_around = true,
+                .status_message = null,
+                .show_item_count = false,
             };
         }
 
@@ -340,6 +346,11 @@ pub fn List(comptime T: type) type {
             return self.filtered_indices.items;
         }
 
+        const ScoredIndex = struct {
+            index: usize,
+            score: i32,
+        };
+
         pub fn updateFilter(self: *Self) !void {
             self.filtered_indices.clearRetainingCapacity();
 
@@ -349,17 +360,32 @@ pub fn List(comptime T: type) type {
                     try self.filtered_indices.append(i);
                 }
             } else {
-                // Filter by title
+                // Fuzzy match by title
                 const filter_lower = try self.toLower(self.allocator, self.filter_text.items);
                 defer self.allocator.free(filter_lower);
+
+                var scored = std.array_list.Managed(ScoredIndex).init(self.allocator);
+                defer scored.deinit();
 
                 for (self.items.items, 0..) |item, i| {
                     const title_lower = try self.toLower(self.allocator, item.title);
                     defer self.allocator.free(title_lower);
 
-                    if (std.mem.indexOf(u8, title_lower, filter_lower) != null) {
-                        try self.filtered_indices.append(i);
+                    const score = fuzzyScore(title_lower, filter_lower);
+                    if (score > 0) {
+                        try scored.append(.{ .index = i, .score = score });
                     }
+                }
+
+                // Sort by score descending
+                std.mem.sort(ScoredIndex, scored.items, {}, struct {
+                    pub fn lessThan(_: void, a: ScoredIndex, b: ScoredIndex) bool {
+                        return a.score > b.score;
+                    }
+                }.lessThan);
+
+                for (scored.items) |s| {
+                    try self.filtered_indices.append(s.index);
                 }
             }
 
@@ -368,6 +394,35 @@ pub fn List(comptime T: type) type {
                 self.cursor = self.filtered_indices.items.len - 1;
             }
             self.ensureVisible();
+        }
+
+        fn fuzzyScore(text: []const u8, pattern: []const u8) i32 {
+            if (pattern.len == 0) return 1;
+            if (text.len == 0) return 0;
+
+            var score: i32 = 0;
+            var pi: usize = 0; // pattern index
+            var consecutive: i32 = 0;
+
+            for (text, 0..) |c, ti| {
+                if (pi < pattern.len and c == pattern[pi]) {
+                    score += 1;
+                    consecutive += 1;
+                    // Consecutive bonus
+                    score += consecutive;
+                    // Word start bonus
+                    if (ti == 0 or text[ti - 1] == ' ' or text[ti - 1] == '_' or text[ti - 1] == '-') {
+                        score += 5;
+                    }
+                    pi += 1;
+                } else {
+                    consecutive = 0;
+                }
+            }
+
+            // All pattern chars must match
+            if (pi < pattern.len) return 0;
+            return score;
         }
 
         fn toLower(self: *const Self, allocator: std.mem.Allocator, str: []const u8) ![]u8 {
@@ -447,6 +502,23 @@ pub fn List(comptime T: type) type {
                         try writer.writeAll(" - ");
                         try writer.writeAll(item.description);
                     }
+                }
+            }
+
+            // Status bar
+            if (self.show_item_count or self.status_message != null) {
+                try writer.writeAll("\n");
+                if (self.show_item_count) {
+                    const count_str = try std.fmt.allocPrint(allocator, "{d}/{d} items", .{
+                        visible.len,
+                        self.items.items.len,
+                    });
+                    const count_styled = try self.filter_style.render(allocator, count_str);
+                    try writer.writeAll(count_styled);
+                }
+                if (self.status_message) |msg| {
+                    if (self.show_item_count) try writer.writeAll(" ");
+                    try writer.writeAll(msg);
                 }
             }
 

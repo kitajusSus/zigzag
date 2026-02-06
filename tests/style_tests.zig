@@ -43,7 +43,7 @@ test "Style builder pattern" {
     style = style.paddingAll(1);
     style = style.marginAll(2);
 
-    try testing.expect(style.bold_attr);
+    try testing.expect(style.bold_attr orelse false);
     try testing.expect(style.foreground == .ansi);
     try testing.expect(style.background == .ansi);
     try testing.expectEqual(@as(u16, 1), style.padding_val.top);

@@ -42,11 +42,15 @@ pub fn isTty(fd: posix.fd_t) bool {
     return posix.isatty(fd);
 }
 
-/// Get terminal size using ioctl
+/// Get terminal size using ioctl (falls back to 80x24 for non-TTY)
 pub fn getSize(fd: posix.fd_t) !Size {
     var wsz: posix.winsize = undefined;
     const result = posix.system.ioctl(fd, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
     if (result != 0) {
+        // Fallback to default size for non-TTY (e.g. pipes)
+        if (!isTty(fd)) {
+            return .{ .rows = 24, .cols = 80 };
+        }
         return TerminalError.IoctlFailed;
     }
     return .{
@@ -60,7 +64,9 @@ pub fn enableRawMode(state: *State) !void {
     if (state.in_raw_mode) return;
 
     if (!isTty(state.stdin_fd)) {
-        return TerminalError.NotATty;
+        // Non-TTY (e.g. pipe) — skip raw mode setup but mark as active
+        state.in_raw_mode = true;
+        return;
     }
 
     // Save original settings

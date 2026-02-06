@@ -64,6 +64,9 @@ pub const Key = union(enum) {
     escape,
     space,
 
+    // Paste (bracketed paste content)
+    paste: []const u8,
+
     // Special
     null_key,
     unknown: []const u8,
@@ -75,6 +78,7 @@ pub const Key = union(enum) {
 
         return switch (self) {
             .char => |c| c == other.char,
+            .paste => |s| std.mem.eql(u8, s, other.paste),
             .unknown => |s| std.mem.eql(u8, s, other.unknown),
             else => true,
         };
@@ -122,16 +126,25 @@ pub const Key = union(enum) {
             .tab => "tab",
             .escape => "escape",
             .space => "space",
+            .paste => "paste",
             .null_key => "null",
             .unknown => "unknown",
         };
     }
 };
 
+/// Key event type (for Kitty keyboard protocol)
+pub const KeyEventType = enum {
+    press,
+    repeat,
+    release,
+};
+
 /// A key event with modifiers
 pub const KeyEvent = struct {
     key: Key,
     modifiers: Modifiers = .{},
+    event_type: KeyEventType = .press,
 
     pub fn eql(self: KeyEvent, other: KeyEvent) bool {
         return self.key.eql(other.key) and self.modifiers.eql(other.modifiers);

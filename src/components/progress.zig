@@ -25,6 +25,10 @@ pub const Progress = struct {
     empty_style: style.Style,
     percent_style: style.Style,
 
+    // Gradient
+    gradient_start: ?Color,
+    gradient_end: ?Color,
+
     pub fn init() Progress {
         return .{
             .current = 0,
@@ -52,6 +56,8 @@ pub const Progress = struct {
                 s = s.inline_style(true);
                 break :blk s;
             },
+            .gradient_start = null,
+            .gradient_end = null,
         };
     }
 
@@ -119,6 +125,12 @@ pub const Progress = struct {
         self.head_char = null;
     }
 
+    /// Set color gradient for the filled portion
+    pub fn setGradient(self: *Progress, start: Color, end: Color) void {
+        self.gradient_start = start;
+        self.gradient_end = end;
+    }
+
     /// Render the progress bar
     pub fn view(self: *const Progress, allocator: std.mem.Allocator) ![]const u8 {
         var result = std.array_list.Managed(u8).init(allocator);
@@ -130,12 +142,22 @@ pub const Progress = struct {
 
         // Filled portion
         for (0..filled_width) |i| {
-            // Use head char for the last filled position if available
-            if (self.head_char != null and i == filled_width - 1 and empty_width > 0) {
-                const head_styled = try self.full_style.render(allocator, self.head_char.?);
-                try writer.writeAll(head_styled);
+            const char = if (self.head_char != null and i == filled_width - 1 and empty_width > 0)
+                self.head_char.?
+            else
+                self.full_char;
+
+            // Apply gradient color if set
+            if (self.gradient_start != null and self.gradient_end != null and filled_width > 0) {
+                const t: f64 = @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(@max(1, filled_width - 1)));
+                const color = interpolateColor(self.gradient_start.?, self.gradient_end.?, t);
+                var grad_style = style.Style{};
+                grad_style = grad_style.fg(color);
+                grad_style = grad_style.inline_style(true);
+                const grad_styled = try grad_style.render(allocator, char);
+                try writer.writeAll(grad_styled);
             } else {
-                const full_styled = try self.full_style.render(allocator, self.full_char);
+                const full_styled = try self.full_style.render(allocator, char);
                 try writer.writeAll(full_styled);
             }
         }
@@ -227,3 +249,15 @@ pub const ProgressStyle = struct {
         return p;
     }
 };
+
+/// Interpolate between two colors using RGB lerp
+pub fn interpolateColor(start: Color, end: Color, t: f64) Color {
+    const start_rgb = start.toRgb() orelse return start;
+    const end_rgb = end.toRgb() orelse return end;
+
+    const r: u8 = @intFromFloat(@as(f64, @floatFromInt(start_rgb.r)) * (1.0 - t) + @as(f64, @floatFromInt(end_rgb.r)) * t);
+    const g: u8 = @intFromFloat(@as(f64, @floatFromInt(start_rgb.g)) * (1.0 - t) + @as(f64, @floatFromInt(end_rgb.g)) * t);
+    const b: u8 = @intFromFloat(@as(f64, @floatFromInt(start_rgb.b)) * (1.0 - t) + @as(f64, @floatFromInt(end_rgb.b)) * t);
+
+    return Color.fromRgb(r, g, b);
+}

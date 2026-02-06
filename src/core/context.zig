@@ -3,6 +3,8 @@
 
 const std = @import("std");
 const Terminal = @import("../terminal/terminal.zig").Terminal;
+const color_mod = @import("../style/color.zig");
+const Logger = @import("log.zig").Logger;
 
 /// Runtime context passed to init, update, and view functions
 pub const Context = struct {
@@ -33,10 +35,27 @@ pub const Context = struct {
     /// Whether the terminal supports 256 colors
     color_256: bool,
 
+    /// Color profile of the terminal
+    color_profile: color_mod.ColorProfile,
+
+    /// Whether the terminal has a dark background
+    is_dark_background: bool,
+
     /// Access to internal state (for advanced use)
     _terminal: ?*Terminal,
 
+    /// Logger for debug output
+    _logger: ?*Logger = null,
+
+    /// Log a debug message (writes to log file if configured)
+    pub fn log(self: *const Context, comptime fmt: []const u8, args: anytype) void {
+        if (self._logger) |logger| {
+            logger.log(fmt, args);
+        }
+    }
+
     pub fn init(allocator: std.mem.Allocator, persistent_allocator: std.mem.Allocator) Context {
+        const profile = color_mod.ColorProfile.detect();
         return .{
             .allocator = allocator,
             .persistent_allocator = persistent_allocator,
@@ -45,8 +64,10 @@ pub const Context = struct {
             .frame = 0,
             .elapsed = 0,
             .delta = 0,
-            .true_color = true,
-            .color_256 = true,
+            .true_color = profile.supportsTrueColor(),
+            .color_256 = profile.supports256(),
+            .color_profile = profile,
+            .is_dark_background = color_mod.hasDarkBackground(),
             ._terminal = null,
         };
     }
@@ -119,4 +140,19 @@ pub const Options = struct {
 
     /// Window title
     title: ?[]const u8 = null,
+
+    /// Custom input file (default: stdin)
+    input: ?std.fs.File = null,
+
+    /// Custom output file (default: stdout)
+    output: ?std.fs.File = null,
+
+    /// Log file path for debug output
+    log_file: ?[]const u8 = null,
+
+    /// Enable Kitty keyboard protocol
+    kitty_keyboard: bool = false,
+
+    /// Enable suspend/resume with Ctrl+Z
+    suspend_enabled: bool = true,
 };

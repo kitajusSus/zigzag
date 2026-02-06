@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
         "text_editor",
         "file_browser",
         "dashboard",
+        "showcase",
     };
 
     for (examples) |example_name| {

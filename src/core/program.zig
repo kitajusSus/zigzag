@@ -2,6 +2,7 @@
 //! Implements the Model-Update-View pattern with an event loop.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Terminal = @import("../terminal/terminal.zig").Terminal;
 const ansi = @import("../terminal/ansi.zig");
 const keyboard = @import("../input/keyboard.zig");
@@ -9,6 +10,7 @@ const Context = @import("context.zig").Context;
 const Options = @import("context.zig").Options;
 const message = @import("message.zig");
 const command = @import("command.zig");
+const Logger = @import("log.zig").Logger;
 
 pub const Cmd = command.Cmd;
 pub const Msg = message;
@@ -45,8 +47,14 @@ pub fn Program(comptime Model: type) type {
         start_time: i128,
         last_frame_time: i128,
         pending_tick: ?u64,
+        every_interval: ?u64,
+        last_every_tick: u64,
         last_view_hash: u64,
         last_line_count: usize,
+        logger: ?Logger,
+
+        /// Message filter function
+        filter: ?*const fn (UserMsg) ?UserMsg,
 
         const Self = @This();
 
@@ -70,8 +78,12 @@ pub fn Program(comptime Model: type) type {
                 .start_time = std.time.nanoTimestamp(),
                 .last_frame_time = std.time.nanoTimestamp(),
                 .pending_tick = null,
+                .every_interval = null,
+                .last_every_tick = 0,
                 .last_view_hash = 0,
                 .last_line_count = 0,
+                .logger = null,
+                .filter = null,
             };
 
             return self;
@@ -82,6 +94,9 @@ pub fn Program(comptime Model: type) type {
             if (self.terminal) |*term| {
                 term.deinit();
             }
+            if (self.logger) |*l| {
+                l.deinit();
+            }
             self.arena.deinit();
 
             // Call model's deinit if it exists
@@ -90,14 +105,30 @@ pub fn Program(comptime Model: type) type {
             }
         }
 
+        /// Set a message filter function
+        pub fn setFilter(self: *Self, f: ?*const fn (UserMsg) ?UserMsg) void {
+            self.filter = f;
+        }
+
         /// Run the program
         pub fn run(self: *Self) !void {
+            // Initialize logger if configured
+            if (self.options.log_file) |log_path| {
+                self.logger = Logger.init(log_path) catch null;
+                if (self.logger != null) {
+                    self.context._logger = &self.logger.?;
+                }
+            }
+
             // Initialize terminal
             self.terminal = try Terminal.init(.{
                 .alt_screen = self.options.alt_screen,
                 .hide_cursor = !self.options.cursor,
                 .mouse = self.options.mouse,
                 .bracketed_paste = self.options.bracketed_paste,
+                .input = self.options.input,
+                .output = self.options.output,
+                .kitty_keyboard = self.options.kitty_keyboard,
             });
 
             // Set title if provided
@@ -156,10 +187,10 @@ pub fn Program(comptime Model: type) type {
 
                 // Only send window_size message if the user model supports it
                 if (@hasField(UserMsg, "window_size")) {
-                    const cmd = self.model.update(.{ .window_size = .{
+                    const cmd = self.dispatchToModel(.{ .window_size = .{
                         .width = size.cols,
                         .height = size.rows,
-                    } }, &self.context);
+                    } });
                     try self.processCommand(cmd);
                 }
             }
@@ -192,7 +223,22 @@ pub fn Program(comptime Model: type) type {
                             .timestamp = @intCast(now),
                             .delta = delta,
                         } };
-                        const cmd = self.model.update(user_msg, &self.context);
+                        const cmd = self.dispatchToModel(user_msg);
+                        try self.processCommand(cmd);
+                    }
+                }
+            }
+
+            // Handle repeating tick
+            if (self.every_interval) |interval| {
+                if (self.context.elapsed - self.last_every_tick >= interval) {
+                    self.last_every_tick = self.context.elapsed;
+                    if (@hasField(UserMsg, "tick")) {
+                        const user_msg = UserMsg{ .tick = .{
+                            .timestamp = @intCast(now),
+                            .delta = delta,
+                        } };
+                        const cmd = self.dispatchToModel(user_msg);
                         try self.processCommand(cmd);
                     }
                 }
@@ -202,22 +248,54 @@ pub fn Program(comptime Model: type) type {
             try self.render();
         }
 
+        /// Dispatch a message to the model, applying the filter if set
+        fn dispatchToModel(self: *Self, user_msg: UserMsg) UserCmd {
+            if (self.filter) |f| {
+                if (f(user_msg)) |filtered_msg| {
+                    return self.model.update(filtered_msg, &self.context);
+                }
+                return .none;
+            }
+            return self.model.update(user_msg, &self.context);
+        }
+
         fn processKeyEvent(self: *Self, key: keyboard.KeyEvent) ?UserCmd {
             // Check for Ctrl+C to quit
             if (key.modifiers.ctrl) {
                 switch (key.key) {
-                    .char => |c| if (c == 'c') {
-                        self.running = false;
-                        return null;
+                    .char => |c| {
+                        if (c == 'c') {
+                            self.running = false;
+                            return null;
+                        }
+                        // Handle Ctrl+Z for suspend
+                        if (c == 'z' and self.options.suspend_enabled) {
+                            self.performSuspend();
+                            return null;
+                        }
                     },
                     else => {},
                 }
             }
 
+            // Handle paste events
+            if (key.key == .paste) {
+                if (@hasField(UserMsg, "paste")) {
+                    const user_msg = UserMsg{ .paste = key.key.paste };
+                    return self.dispatchToModel(user_msg);
+                }
+                // If model doesn't handle paste, send as individual key events
+                if (@hasField(UserMsg, "key")) {
+                    const user_msg = UserMsg{ .key = key };
+                    return self.dispatchToModel(user_msg);
+                }
+                return null;
+            }
+
             // Convert to user message if Model.Msg has a key variant
             if (@hasField(UserMsg, "key")) {
                 const user_msg = UserMsg{ .key = key };
-                return self.model.update(user_msg, &self.context);
+                return self.dispatchToModel(user_msg);
             }
 
             return null;
@@ -226,10 +304,40 @@ pub fn Program(comptime Model: type) type {
         fn processMouseEvent(self: *Self, mouse_event: keyboard.MouseEvent) ?UserCmd {
             if (@hasField(UserMsg, "mouse")) {
                 const user_msg = UserMsg{ .mouse = mouse_event };
-                return self.model.update(user_msg, &self.context);
+                return self.dispatchToModel(user_msg);
             }
 
             return null;
+        }
+
+        /// Perform suspend (Ctrl+Z) — POSIX only
+        fn performSuspend(self: *Self) void {
+            if (builtin.os.tag == .windows) return;
+
+            // Cleanup terminal
+            if (self.terminal) |*term| {
+                term.cleanup() catch {};
+            }
+
+            // Raise SIGTSTP to suspend process
+            if (builtin.os.tag != .windows) {
+                const posix = std.posix;
+                _ = posix.raise(posix.SIG.TSTP) catch {};
+            }
+
+            // When we resume (after `fg`), re-setup terminal
+            if (self.terminal) |*term| {
+                term.setup() catch {};
+            }
+
+            // Force re-render
+            self.last_view_hash = 0;
+
+            // Dispatch resumed message if model supports it
+            if (@hasField(UserMsg, "resumed")) {
+                const cmd = self.dispatchToModel(.{ .resumed = {} });
+                self.processCommand(cmd) catch {};
+            }
         }
 
         fn processCommand(self: *Self, cmd: UserCmd) !void {
@@ -241,6 +349,10 @@ pub fn Program(comptime Model: type) type {
                 .tick => |ns| {
                     self.pending_tick = self.context.elapsed + ns;
                 },
+                .every => |ns| {
+                    self.every_interval = ns;
+                    self.last_every_tick = self.context.elapsed;
+                },
                 .batch => |cmds| {
                     for (cmds) |c| {
                         try self.processCommand(c);
@@ -251,14 +363,71 @@ pub fn Program(comptime Model: type) type {
                         try self.processCommand(c);
                     }
                 },
-                .msg => |msg| {
-                    const new_cmd = self.model.update(msg, &self.context);
+                .msg => |m| {
+                    const new_cmd = self.dispatchToModel(m);
                     try self.processCommand(new_cmd);
                 },
                 .perform => |func| {
-                    if (func()) |msg| {
-                        const new_cmd = self.model.update(msg, &self.context);
+                    if (func()) |m| {
+                        const new_cmd = self.dispatchToModel(m);
                         try self.processCommand(new_cmd);
+                    }
+                },
+                .suspend_process => {
+                    self.performSuspend();
+                },
+                .enable_mouse => {
+                    if (self.terminal) |*term| {
+                        try term.enableMouse();
+                    }
+                },
+                .disable_mouse => {
+                    if (self.terminal) |*term| {
+                        try term.disableMouse();
+                    }
+                },
+                .show_cursor => {
+                    if (self.terminal) |*term| {
+                        const writer = term.writer();
+                        try writer.writeAll(ansi.cursor_show);
+                        try term.flush();
+                    }
+                },
+                .hide_cursor => {
+                    if (self.terminal) |*term| {
+                        const writer = term.writer();
+                        try writer.writeAll(ansi.cursor_hide);
+                        try term.flush();
+                    }
+                },
+                .enter_alt_screen => {
+                    if (self.terminal) |*term| {
+                        const writer = term.writer();
+                        try writer.writeAll(ansi.alt_screen_enter);
+                        try term.flush();
+                    }
+                },
+                .exit_alt_screen => {
+                    if (self.terminal) |*term| {
+                        const writer = term.writer();
+                        try writer.writeAll(ansi.alt_screen_exit);
+                        try term.flush();
+                    }
+                },
+                .set_title => |title| {
+                    if (self.terminal) |*term| {
+                        try term.setTitle(title);
+                    }
+                },
+                .println => |line| {
+                    if (self.terminal) |*term| {
+                        const writer = term.writer();
+                        try writer.writeAll(ansi.cursor_save);
+                        try writer.writeAll(ansi.cursor_home);
+                        try writer.writeAll(line);
+                        try writer.writeAll("\n");
+                        try writer.writeAll(ansi.cursor_restore);
+                        try term.flush();
                     }
                 },
             }
@@ -313,8 +482,8 @@ pub fn Program(comptime Model: type) type {
         }
 
         /// Send a message to the model
-        pub fn send(self: *Self, msg: UserMsg) !void {
-            const cmd = self.model.update(msg, &self.context);
+        pub fn send(self: *Self, m: UserMsg) !void {
+            const cmd = self.dispatchToModel(m);
             try self.processCommand(cmd);
         }
 

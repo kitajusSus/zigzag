@@ -97,6 +97,11 @@ fn parseCsi(data: []const u8) ?ParseReturn {
     if (data.len < 3) return null;
     if (data[0] != 0x1b or data[1] != '[') return null;
 
+    // Check for bracketed paste start: ESC[200~
+    if (data.len >= 6 and std.mem.startsWith(u8, data[2..], "200~")) {
+        return parseBracketedPaste(data);
+    }
+
     // Check for mouse SGR sequence
     if (data.len >= 3 and data[2] == '<') {
         if (mouse.parseSgr(data)) |m| {
@@ -107,8 +112,10 @@ fn parseCsi(data: []const u8) ?ParseReturn {
     var idx: usize = 2;
     var params: [8]u16 = .{0} ** 8;
     var param_count: usize = 0;
+    var has_colon = false;
+    var sub_params: [8]u16 = .{0} ** 8;
 
-    // Parse parameters
+    // Parse parameters (supports both ; and : separators for Kitty protocol)
     while (idx < data.len and param_count < params.len) {
         const c = data[idx];
         if (c >= '0' and c <= '9') {
@@ -117,6 +124,16 @@ fn parseCsi(data: []const u8) ?ParseReturn {
         } else if (c == ';') {
             param_count += 1;
             idx += 1;
+        } else if (c == ':') {
+            // Kitty protocol uses : for sub-parameters (e.g., modifiers:event_type)
+            has_colon = true;
+            sub_params[param_count] = 0;
+            idx += 1;
+            // Parse the sub-parameter value
+            while (idx < data.len and data[idx] >= '0' and data[idx] <= '9') {
+                sub_params[param_count] = sub_params[param_count] * 10 + @as(u16, @intCast(data[idx] - '0'));
+                idx += 1;
+            }
         } else {
             break;
         }
@@ -127,6 +144,11 @@ fn parseCsi(data: []const u8) ?ParseReturn {
 
     const final_byte = data[idx];
     idx += 1;
+
+    // Kitty keyboard protocol: final byte 'u'
+    if (final_byte == 'u') {
+        return parseKittyCsi(params[0..param_count], sub_params[0..param_count], has_colon, idx);
+    }
 
     // Determine modifiers from parameter
     var modifiers = Modifiers{};
@@ -175,6 +197,88 @@ fn parseCsi(data: []const u8) ?ParseReturn {
     };
 
     return .{ .result = .{ .key = .{ .key = key, .modifiers = modifiers } }, .consumed = idx };
+}
+
+/// Parse Kitty keyboard protocol CSI sequence: CSI keycode;modifiers:event_type u
+fn parseKittyCsi(params: []const u16, sub_params: []const u16, has_colon: bool, consumed: usize) ?ParseReturn {
+    if (params.len == 0) return null;
+
+    const keycode = params[0];
+
+    // Determine modifiers
+    var modifiers = Modifiers{};
+    if (params.len >= 2 and params[1] > 1) {
+        const mod_param = params[1] - 1;
+        modifiers.shift = (mod_param & 1) != 0;
+        modifiers.alt = (mod_param & 2) != 0;
+        modifiers.ctrl = (mod_param & 4) != 0;
+        modifiers.super = (mod_param & 8) != 0;
+    }
+
+    // Determine event type from sub-parameter
+    var event_type: keys.KeyEventType = .press;
+    if (has_colon and params.len >= 2) {
+        event_type = switch (sub_params[1]) {
+            2 => .repeat,
+            3 => .release,
+            else => .press,
+        };
+    }
+
+    // Map keycode to Key
+    const key: Key = switch (keycode) {
+        9 => .tab,
+        13 => .enter,
+        27 => .escape,
+        32 => .space,
+        127 => .backspace,
+        57358 => .{ .char = 0 }, // caps_lock etc - map to null
+        else => blk: {
+            if (keycode >= 32 and keycode < 127) {
+                break :blk .{ .char = @intCast(keycode) };
+            }
+            if (keycode > 127 and keycode <= 0x10FFFF) {
+                break :blk .{ .char = @intCast(keycode) };
+            }
+            break :blk .null_key;
+        },
+    };
+
+    return .{
+        .result = .{ .key = .{
+            .key = key,
+            .modifiers = modifiers,
+            .event_type = event_type,
+        } },
+        .consumed = consumed,
+    };
+}
+
+/// Parse bracketed paste: ESC[200~ ... ESC[201~
+fn parseBracketedPaste(data: []const u8) ?ParseReturn {
+    // data starts with ESC[200~
+    const paste_start = 6; // length of ESC[200~
+    const end_marker = "\x1b[201~";
+
+    if (std.mem.indexOf(u8, data[paste_start..], end_marker)) |end_offset| {
+        const paste_content = data[paste_start .. paste_start + end_offset];
+        const total_consumed = paste_start + end_offset + end_marker.len;
+        return .{
+            .result = .{ .key = .{
+                .key = .{ .paste = paste_content },
+            } },
+            .consumed = total_consumed,
+        };
+    }
+
+    // End marker not found — consume all available data as paste
+    // (paste may span multiple reads)
+    return .{
+        .result = .{ .key = .{
+            .key = .{ .paste = data[paste_start..] },
+        } },
+        .consumed = data.len,
+    };
 }
 
 fn parseSs3(data: []const u8) ?ParseReturn {

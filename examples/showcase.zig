@@ -1,0 +1,710 @@
+//! ZigZag Showcase Example
+//! Comprehensive multi-tab application demonstrating ALL framework features.
+
+const std = @import("std");
+const zz = @import("zigzag");
+
+const Tab = enum {
+    dashboard,
+    data,
+    files,
+    editor,
+
+    pub fn name(self: Tab) []const u8 {
+        return switch (self) {
+            .dashboard => "Dashboard",
+            .data => "Data",
+            .files => "Files",
+            .editor => "Editor",
+        };
+    }
+
+    pub fn index(self: Tab) usize {
+        return @intFromEnum(self);
+    }
+};
+
+const Model = struct {
+    // Tab state
+    active_tab: Tab,
+
+    // Dashboard components
+    spinner: zz.Spinner,
+    progress: zz.Progress,
+    timer: zz.components.Timer,
+    sparkline: zz.Sparkline,
+    notifications: zz.Notification,
+    frame_count: u64,
+    paused: bool,
+    last_elapsed: u64,
+
+    // Data tab components
+    table: zz.Table(4),
+    tree: zz.Tree(void),
+    styled_list: zz.StyledList,
+    data_focus: DataFocus,
+
+    // Files tab
+    // (simplified - just show a viewport with directory listing)
+    file_viewport: zz.components.Viewport,
+
+    // Editor tab
+    text_area: zz.TextArea,
+
+    // Global
+    confirm: zz.Confirm,
+    help: zz.components.Help,
+    show_quit_confirm: bool,
+
+    const DataFocus = enum { table_focus, tree_focus };
+
+    pub const Msg = union(enum) {
+        key: zz.KeyEvent,
+        tick: zz.msg.Tick,
+        window_size: struct { width: u16, height: u16 },
+    };
+
+    pub fn init(self: *Model, ctx: *zz.Context) zz.Cmd(Msg) {
+        // Dashboard
+        self.spinner = zz.Spinner.init();
+        self.spinner.setFrames(zz.Spinner.Styles.dots);
+
+        self.progress = zz.Progress.init();
+        self.progress.setWidth(30);
+        self.progress.setGradient(zz.Color.hex("#FF6B6B"), zz.Color.hex("#4ECDC4"));
+
+        self.timer = zz.components.Timer.stopwatch();
+        self.timer.start();
+
+        self.sparkline = zz.Sparkline.init(ctx.persistent_allocator);
+        self.sparkline.setWidth(30);
+
+        self.notifications = zz.Notification.init(ctx.persistent_allocator);
+
+        self.frame_count = 0;
+        self.paused = false;
+        self.last_elapsed = 0;
+
+        // Data tab
+        self.table = zz.Table(4).init(ctx.persistent_allocator);
+        self.table.setHeaders(.{ "Server", "Status", "Uptime", "Load" });
+        self.table.setBorder(zz.Border.rounded);
+        var alt_style = zz.Style{};
+        alt_style = alt_style.fg(zz.Color.gray(18));
+        alt_style = alt_style.inline_style(true);
+        self.table.alt_row_style = alt_style;
+        self.table.visible_rows = 8;
+
+        self.table.addRow(.{ "web-01", "online", "45d 3h", "0.42" }) catch {};
+        self.table.addRow(.{ "web-02", "online", "45d 3h", "0.38" }) catch {};
+        self.table.addRow(.{ "db-01", "online", "120d 7h", "0.71" }) catch {};
+        self.table.addRow(.{ "db-02", "standby", "120d 7h", "0.12" }) catch {};
+        self.table.addRow(.{ "cache-01", "online", "30d 2h", "0.55" }) catch {};
+        self.table.addRow(.{ "cache-02", "warning", "30d 2h", "0.89" }) catch {};
+        self.table.addRow(.{ "worker-01", "online", "15d 8h", "0.63" }) catch {};
+        self.table.addRow(.{ "worker-02", "offline", "0d 0h", "0.00" }) catch {};
+        self.table.addRow(.{ "monitor", "online", "60d 1h", "0.22" }) catch {};
+        self.table.addRow(.{ "lb-01", "online", "90d 5h", "0.45" }) catch {};
+        self.table.focus();
+
+        // Tree
+        self.tree = zz.Tree(void).init(ctx.persistent_allocator);
+        self.tree.enumerator = .{
+            .item_prefix = "\u{251c}\u{2500}\u{2500} ",
+            .last_prefix = "\u{2570}\u{2500}\u{2500} ",
+            .indent_prefix = "\u{2502}   ",
+            .empty_prefix = "    ",
+        };
+        const root = self.tree.addRoot({}, "project/") catch 0;
+        const src = self.tree.addChild(root, {}, "src/") catch 0;
+        _ = self.tree.addChild(src, {}, "main.zig") catch {};
+        _ = self.tree.addChild(src, {}, "lib.zig") catch {};
+        const comp = self.tree.addChild(src, {}, "components/") catch 0;
+        _ = self.tree.addChild(comp, {}, "button.zig") catch {};
+        _ = self.tree.addChild(comp, {}, "input.zig") catch {};
+        const tests = self.tree.addChild(root, {}, "tests/") catch 0;
+        _ = self.tree.addChild(tests, {}, "unit_test.zig") catch {};
+        _ = self.tree.addChild(root, {}, "build.zig") catch {};
+        _ = self.tree.addChild(root, {}, "README.md") catch {};
+
+        // Styled list
+        self.styled_list = zz.StyledList.init(ctx.persistent_allocator);
+        self.styled_list.setEnumerator(.roman);
+        self.styled_list.addItem("Setup development environment") catch {};
+        self.styled_list.addItem("Implement core features") catch {};
+        self.styled_list.addItemNested("Style system", 1) catch {};
+        self.styled_list.addItemNested("Component library", 1) catch {};
+        self.styled_list.addItem("Write tests") catch {};
+        self.styled_list.addItem("Deploy to production") catch {};
+
+        self.data_focus = .table_focus;
+
+        // Files tab - viewport
+        self.file_viewport = zz.components.Viewport.init(ctx.persistent_allocator, 60, 15);
+        self.file_viewport.setContent(
+            \\  Directory listing:
+            \\
+            \\  drwxr-xr-x  src/
+            \\  drwxr-xr-x  examples/
+            \\  drwxr-xr-x  tests/
+            \\  -rw-r--r--  build.zig
+            \\  -rw-r--r--  README.md
+            \\  -rw-r--r--  LICENSE
+            \\  drwxr-xr-x  .git/
+            \\  -rw-r--r--  .gitignore
+            \\
+            \\  Use j/k to scroll, Tab to switch tabs.
+        ) catch {};
+
+        // Editor tab
+        self.text_area = zz.TextArea.init(ctx.persistent_allocator);
+        self.text_area.setSize(@min(ctx.width -| 4, 70), @min(ctx.height -| 8, 20));
+        self.text_area.line_numbers = true;
+        self.text_area.word_wrap = true;
+        self.text_area.setValue(
+            \\const std = @import("std");
+            \\
+            \\pub fn main() !void {
+            \\    const stdout = std.io.getStdOut().writer();
+            \\    try stdout.print("Hello, {s}!\n", .{"world"});
+            \\}
+            \\
+            \\// Edit this code with the text area component.
+            \\// Supports line numbers, word wrap, and full
+            \\// cursor navigation.
+        ) catch {};
+
+        // Global
+        self.active_tab = .dashboard;
+        self.confirm = zz.Confirm.init("Are you sure you want to quit?");
+        self.show_quit_confirm = false;
+
+        self.help = zz.components.Help.init(ctx.persistent_allocator);
+        self.help.addBinding("1-4", "tabs") catch {};
+        self.help.addBinding("Tab", "next tab") catch {};
+        self.help.addBinding("Ctrl+Q", "quit") catch {};
+
+        return zz.Cmd(Msg).tickMs(16);
+    }
+
+    pub fn update(self: *Model, msg: Msg, ctx: *zz.Context) zz.Cmd(Msg) {
+        switch (msg) {
+            .tick => |t| {
+                self.last_elapsed = ctx.elapsed;
+                if (!self.paused) {
+                    self.frame_count = ctx.frame;
+                    _ = self.spinner.update(@intCast(ctx.elapsed));
+                    self.timer.update(t.delta);
+
+                    // Simulate progress
+                    if (self.progress.percent() < 100) {
+                        self.progress.increment(0.05);
+                    }
+
+                    // Update sparkline with FPS
+                    self.sparkline.push(ctx.fps()) catch {};
+
+                    // Update notifications
+                    self.notifications.update(ctx.elapsed);
+                }
+
+                return zz.Cmd(Msg).tickMs(16);
+            },
+            .window_size => {
+                self.text_area.setSize(@min(ctx.width -| 4, 70), @min(ctx.height -| 8, 20));
+                return .none;
+            },
+            .key => |k| {
+                // Handle quit confirm first
+                if (self.show_quit_confirm) {
+                    self.confirm.handleKey(k);
+                    if (self.confirm.result()) |confirmed| {
+                        self.show_quit_confirm = false;
+                        if (confirmed) return .quit;
+                    }
+                    return .none;
+                }
+
+                // Global keys
+                if (k.modifiers.ctrl) {
+                    switch (k.key) {
+                        .char => |c| switch (c) {
+                            'q' => {
+                                self.show_quit_confirm = true;
+                                self.confirm.show();
+                                return .none;
+                            },
+                            else => {},
+                        },
+                        else => {},
+                    }
+                    // Pass to editor if active
+                    if (self.active_tab == .editor) {
+                        self.text_area.handleKey(k);
+                    }
+                    return .none;
+                }
+
+                switch (k.key) {
+                    .char => |c| switch (c) {
+                        '1' => self.active_tab = .dashboard,
+                        '2' => self.active_tab = .data,
+                        '3' => self.active_tab = .files,
+                        '4' => self.active_tab = .editor,
+                        else => self.handleTabKey(k),
+                    },
+                    .tab => {
+                        if (k.modifiers.shift) {
+                            self.active_tab = switch (self.active_tab) {
+                                .dashboard => .editor,
+                                .data => .dashboard,
+                                .files => .data,
+                                .editor => .files,
+                            };
+                        } else {
+                            self.active_tab = switch (self.active_tab) {
+                                .dashboard => .data,
+                                .data => .files,
+                                .files => .editor,
+                                .editor => .dashboard,
+                            };
+                        }
+                    },
+                    .escape => {
+                        // Do nothing (reserved)
+                    },
+                    else => self.handleTabKey(k),
+                }
+                return .none;
+            },
+        }
+        return .none;
+    }
+
+    fn handleTabKey(self: *Model, k: zz.KeyEvent) void {
+        switch (self.active_tab) {
+            .dashboard => {
+                switch (k.key) {
+                    .char => |c| switch (c) {
+                        ' ' => {
+                            self.paused = !self.paused;
+                            if (self.paused) self.timer.stop() else self.timer.start();
+                        },
+                        'r' => {
+                            self.progress.setPercent(0);
+                            self.timer.reset();
+                            self.timer.start();
+                            self.paused = false;
+                        },
+                        'n' => {
+                            const texts = [_][]const u8{
+                                "Build completed successfully",
+                                "New deployment ready",
+                                "Warning: high CPU usage",
+                                "Error: connection timeout",
+                            };
+                            const levels = [_]zz.components.notification.Level{
+                                .success,
+                                .info,
+                                .warning,
+                                .err,
+                            };
+                            const idx = self.frame_count % 4;
+                            self.notifications.push(
+                                texts[idx],
+                                levels[idx],
+                                3000,
+                                self.last_elapsed,
+                            ) catch {};
+                        },
+                        else => {},
+                    },
+                    else => {},
+                }
+            },
+            .data => {
+                switch (k.key) {
+                    .char => |c| switch (c) {
+                        '\t' => {
+                            // Switch focus between table and tree
+                            if (self.data_focus == .table_focus) {
+                                self.data_focus = .tree_focus;
+                                self.table.blur();
+                            } else {
+                                self.data_focus = .table_focus;
+                                self.table.focus();
+                            }
+                        },
+                        else => {
+                            if (self.data_focus == .table_focus) {
+                                self.table.handleKey(k);
+                            }
+                        },
+                    },
+                    else => {
+                        if (self.data_focus == .table_focus) {
+                            self.table.handleKey(k);
+                        }
+                    },
+                }
+            },
+            .files => {
+                self.file_viewport.handleKey(k);
+            },
+            .editor => {
+                self.text_area.handleKey(k);
+            },
+        }
+    }
+
+    pub fn view(self: *const Model, ctx: *const zz.Context) []const u8 {
+        // Build layout
+        const tab_bar = self.renderTabBar(ctx) catch return "Error rendering tab bar";
+        const content = self.renderActiveTab(ctx) catch return "Error rendering content";
+        const status = self.renderStatusBar(ctx) catch return "Error rendering status";
+
+        // Confirmation overlay
+        const confirm_view = if (self.show_quit_confirm)
+            self.confirm.view(ctx.allocator) catch ""
+        else
+            "";
+
+        // Compose full view
+        const main_view = if (self.show_quit_confirm)
+            zz.joinVertical(ctx.allocator, &.{ tab_bar, "", content, "", confirm_view, "", status }) catch tab_bar
+        else
+            zz.joinVertical(ctx.allocator, &.{ tab_bar, "", content, "", status }) catch tab_bar;
+
+        return zz.place.place(
+            ctx.allocator,
+            ctx.width,
+            ctx.height,
+            .center,
+            .top,
+            main_view,
+        ) catch main_view;
+    }
+
+    fn renderTabBar(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        var result = std.array_list.Managed(u8).init(ctx.allocator);
+        const writer = result.writer();
+
+        const tabs = [_]Tab{ .dashboard, .data, .files, .editor };
+        for (tabs, 0..) |tab, i| {
+            if (i > 0) try writer.writeAll("  ");
+
+            if (tab == self.active_tab) {
+                var active_style = zz.Style{};
+                active_style = active_style.bold(true);
+                active_style = active_style.fg(zz.Color.hex("#4ECDC4"));
+                active_style = active_style.underline(true);
+                active_style = active_style.inline_style(true);
+                const label = try std.fmt.allocPrint(ctx.allocator, "{d}:{s}", .{ i + 1, tab.name() });
+                const styled = try active_style.render(ctx.allocator, label);
+                try writer.writeAll(styled);
+            } else {
+                var tab_style = zz.Style{};
+                tab_style = tab_style.fg(zz.Color.gray(12));
+                tab_style = tab_style.inline_style(true);
+                const label = try std.fmt.allocPrint(ctx.allocator, "{d}:{s}", .{ i + 1, tab.name() });
+                const styled = try tab_style.render(ctx.allocator, label);
+                try writer.writeAll(styled);
+            }
+        }
+
+        // Wrap in border
+        const bar_content = try result.toOwnedSlice();
+        var bar_style = zz.Style{};
+        bar_style = bar_style.borderAll(zz.Border.rounded);
+        bar_style = bar_style.borderForeground(zz.Color.gray(8));
+        bar_style = bar_style.paddingLeft(1).paddingRight(1);
+        bar_style = bar_style.width(@min(ctx.width -| 2, 60));
+
+        return bar_style.render(ctx.allocator, bar_content);
+    }
+
+    fn renderActiveTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        return switch (self.active_tab) {
+            .dashboard => self.renderDashboard(ctx),
+            .data => self.renderDataTab(ctx),
+            .files => self.renderFilesTab(ctx),
+            .editor => self.renderEditorTab(ctx),
+        };
+    }
+
+    fn renderDashboard(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        // Left column: Stats
+        const stats = try self.renderDashboardStats(ctx);
+
+        // Right column: Progress + Timer
+        const progress_box = try self.renderDashboardProgress(ctx);
+
+        // Top row
+        const top_row = try zz.joinHorizontal(ctx.allocator, &.{ stats, "  ", progress_box });
+
+        // Bottom: Sparkline
+        const sparkline_view = try self.sparkline.view(ctx.allocator);
+        var spark_label_style = zz.Style{};
+        spark_label_style = spark_label_style.fg(zz.Color.gray(15));
+        spark_label_style = spark_label_style.inline_style(true);
+        const spark_label = try spark_label_style.render(ctx.allocator, "FPS: ");
+        const sparkline_row = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ spark_label, sparkline_view });
+
+        // Spinner
+        const spinner_view = if (self.progress.isComplete())
+            blk: {
+                var done_style = zz.Style{};
+                done_style = done_style.fg(zz.Color.green());
+                done_style = done_style.inline_style(true);
+                break :blk try done_style.render(ctx.allocator, "* All tasks complete!");
+            }
+        else
+            try self.spinner.viewWithTitle(ctx.allocator, "Processing...");
+
+        // Notifications
+        const notif_view = try self.notifications.view(ctx.allocator);
+        const has_notifs = self.notifications.hasMessages();
+
+        // Bottom box
+        var bottom_style = zz.Style{};
+        bottom_style = bottom_style.borderAll(zz.Border.rounded);
+        bottom_style = bottom_style.borderForeground(zz.Color.green());
+        bottom_style = bottom_style.paddingAll(1);
+
+        const bottom_content = if (has_notifs)
+            try std.fmt.allocPrint(ctx.allocator, "{s}\n{s}\n\n{s}", .{ sparkline_row, spinner_view, notif_view })
+        else
+            try std.fmt.allocPrint(ctx.allocator, "{s}\n{s}", .{ sparkline_row, spinner_view });
+
+        const bottom_box = try bottom_style.render(ctx.allocator, bottom_content);
+
+        return zz.joinVertical(ctx.allocator, &.{ top_row, "", bottom_box });
+    }
+
+    fn renderDashboardStats(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        var box_style = zz.Style{};
+        box_style = box_style.borderAll(zz.Border.rounded);
+        box_style = box_style.borderForeground(zz.Color.cyan());
+        box_style = box_style.borderTopForeground(zz.Color.hex("#4ECDC4"));
+        box_style = box_style.paddingAll(1);
+        box_style = box_style.width(25);
+
+        var header_style = zz.Style{};
+        header_style = header_style.bold(true);
+        header_style = header_style.fg(zz.Color.cyan());
+        header_style = header_style.inline_style(true);
+
+        var value_style = zz.Style{};
+        value_style = value_style.bold(true);
+        value_style = value_style.fg(zz.Color.white());
+        value_style = value_style.inline_style(true);
+
+        var label_style = zz.Style{};
+        label_style = label_style.fg(zz.Color.gray(15));
+        label_style = label_style.inline_style(true);
+
+        const header = try header_style.render(ctx.allocator, "Statistics");
+        const frame_val = try value_style.render(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "{d}", .{self.frame_count}));
+        const frame_label = try label_style.render(ctx.allocator, " Frames");
+        const fps_val = try value_style.render(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "{d:.0}", .{ctx.fps()}));
+        const fps_label = try label_style.render(ctx.allocator, " FPS");
+
+        var paused_style = zz.Style{};
+        paused_style = paused_style.fg(zz.Color.yellow());
+        paused_style = paused_style.inline_style(true);
+        const status = if (self.paused)
+            try paused_style.render(ctx.allocator, "PAUSED")
+        else blk: {
+            var run_style = zz.Style{};
+            run_style = run_style.fg(zz.Color.green());
+            run_style = run_style.inline_style(true);
+            break :blk try run_style.render(ctx.allocator, "RUNNING");
+        };
+
+        const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}{s}\n{s}{s}\n\n{s}", .{
+            header, frame_val, frame_label, fps_val, fps_label, status,
+        });
+
+        return box_style.render(ctx.allocator, content);
+    }
+
+    fn renderDashboardProgress(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        var box_style = zz.Style{};
+        box_style = box_style.borderAll(zz.Border.double);
+        box_style = box_style.borderForeground(zz.Color.magenta());
+        box_style = box_style.paddingAll(1);
+        box_style = box_style.width(35);
+
+        var header_style = zz.Style{};
+        header_style = header_style.bold(true);
+        header_style = header_style.fg(zz.Color.magenta());
+        header_style = header_style.inline_style(true);
+        const header = try header_style.render(ctx.allocator, "Progress");
+
+        const progress_bar = try self.progress.view(ctx.allocator);
+
+        var timer_label_style = zz.Style{};
+        timer_label_style = timer_label_style.fg(zz.Color.gray(15));
+        timer_label_style = timer_label_style.inline_style(true);
+        const timer_label = try timer_label_style.render(ctx.allocator, "Elapsed: ");
+        const timer_view = try self.timer.view(ctx.allocator);
+
+        const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}\n\n{s}{s}", .{
+            header, progress_bar, timer_label, timer_view,
+        });
+
+        return box_style.render(ctx.allocator, content);
+    }
+
+    fn renderDataTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        // Left: Interactive table
+        const table_view = try self.table.view(ctx.allocator);
+        var table_box_style = zz.Style{};
+        table_box_style = table_box_style.borderAll(zz.Border.normal);
+        if (self.data_focus == .table_focus) {
+            table_box_style = table_box_style.borderForeground(zz.Color.cyan());
+        } else {
+            table_box_style = table_box_style.borderForeground(zz.Color.gray(8));
+        }
+        table_box_style = table_box_style.paddingAll(0);
+        const table_boxed = try table_box_style.render(ctx.allocator, table_view);
+
+        // Right top: Tree
+        const tree_view = try self.tree.view(ctx.allocator);
+        var tree_box_style = zz.Style{};
+        tree_box_style = tree_box_style.borderAll(zz.Border.rounded);
+        if (self.data_focus == .tree_focus) {
+            tree_box_style = tree_box_style.borderForeground(zz.Color.cyan());
+        } else {
+            tree_box_style = tree_box_style.borderForeground(zz.Color.gray(8));
+        }
+        tree_box_style = tree_box_style.paddingLeft(1).paddingRight(1);
+
+        var tree_header_style = zz.Style{};
+        tree_header_style = tree_header_style.bold(true);
+        tree_header_style = tree_header_style.fg(zz.Color.yellow());
+        tree_header_style = tree_header_style.inline_style(true);
+        const tree_header = try tree_header_style.render(ctx.allocator, "Project Structure");
+        const tree_content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ tree_header, tree_view });
+        const tree_boxed = try tree_box_style.render(ctx.allocator, tree_content);
+
+        // Right bottom: Styled list
+        const list_view = try self.styled_list.view(ctx.allocator);
+        var list_box_style = zz.Style{};
+        list_box_style = list_box_style.borderAll(zz.Border.rounded);
+        list_box_style = list_box_style.borderForeground(zz.Color.gray(8));
+        list_box_style = list_box_style.paddingLeft(1).paddingRight(1);
+
+        var list_header_style = zz.Style{};
+        list_header_style = list_header_style.bold(true);
+        list_header_style = list_header_style.fg(zz.Color.green());
+        list_header_style = list_header_style.inline_style(true);
+        const list_header = try list_header_style.render(ctx.allocator, "TODO Items");
+        const list_content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ list_header, list_view });
+        const list_boxed = try list_box_style.render(ctx.allocator, list_content);
+
+        // Right column
+        const right_col = try zz.joinVertical(ctx.allocator, &.{ tree_boxed, list_boxed });
+
+        // Data tab hint
+        var hint_style = zz.Style{};
+        hint_style = hint_style.fg(zz.Color.gray(10));
+        hint_style = hint_style.italic(true);
+        hint_style = hint_style.inline_style(true);
+        const focus_hint = if (self.data_focus == .table_focus)
+            try hint_style.render(ctx.allocator, "j/k: navigate table  Tab(in data): switch focus")
+        else
+            try hint_style.render(ctx.allocator, "Tab(in data): switch focus to table");
+
+        const main_row = try zz.joinHorizontal(ctx.allocator, &.{ table_boxed, " ", right_col });
+
+        return zz.joinVertical(ctx.allocator, &.{ main_row, "", focus_hint });
+    }
+
+    fn renderFilesTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        const viewport_view = try self.file_viewport.view(ctx.allocator);
+
+        var box_style = zz.Style{};
+        box_style = box_style.borderAll(zz.Border.thick);
+        box_style = box_style.borderForeground(zz.Color.blue());
+        box_style = box_style.paddingAll(1);
+
+        var header_style = zz.Style{};
+        header_style = header_style.bold(true);
+        header_style = header_style.fg(zz.Color.blue());
+        header_style = header_style.inline_style(true);
+        const header = try header_style.render(ctx.allocator, "File Browser");
+
+        const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ header, viewport_view });
+
+        return box_style.render(ctx.allocator, content);
+    }
+
+    fn renderEditorTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        const editor_view = try self.text_area.view(ctx.allocator);
+
+        var box_style = zz.Style{};
+        box_style = box_style.borderAll(zz.Border.normal);
+        box_style = box_style.borderForeground(zz.Color.hex("#FF6B6B"));
+        box_style = box_style.paddingLeft(1).paddingRight(1);
+
+        var header_style = zz.Style{};
+        header_style = header_style.bold(true);
+        header_style = header_style.fg(zz.Color.hex("#FF6B6B"));
+        header_style = header_style.inline_style(true);
+        const header = try header_style.render(ctx.allocator, "Text Editor");
+
+        var hint_style = zz.Style{};
+        hint_style = hint_style.fg(zz.Color.gray(10));
+        hint_style = hint_style.italic(true);
+        hint_style = hint_style.inline_style(true);
+        const hint = try hint_style.render(ctx.allocator, "Type to edit. Arrow keys to navigate.");
+
+        const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}\n\n{s}", .{ header, editor_view, hint });
+
+        return box_style.render(ctx.allocator, content);
+    }
+
+    fn renderStatusBar(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        _ = self;
+        var help_comp = zz.components.Help.init(ctx.allocator);
+        try help_comp.addBinding("1-4", "tabs");
+        try help_comp.addBinding("Tab", "next");
+        try help_comp.addBinding("Ctrl+Q", "quit");
+        help_comp.setMaxWidth(ctx.width);
+
+        const help_view = try help_comp.view(ctx.allocator);
+
+        var status_style = zz.Style{};
+        status_style = status_style.borderAll(zz.Border.rounded);
+        status_style = status_style.borderForeground(zz.Color.gray(6));
+        status_style = status_style.paddingLeft(1).paddingRight(1);
+        status_style = status_style.width(@min(ctx.width -| 2, 60));
+
+        return status_style.render(ctx.allocator, help_view);
+    }
+
+    pub fn deinit(self: *Model) void {
+        self.sparkline.deinit();
+        self.notifications.deinit();
+        self.table.deinit();
+        self.tree.deinit();
+        self.styled_list.deinit();
+        self.file_viewport.deinit();
+        self.text_area.deinit();
+        self.help.deinit();
+    }
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var program = try zz.Program(Model).initWithOptions(gpa.allocator(), .{
+        .mouse = true,
+        .title = "ZigZag Showcase",
+    });
+    defer program.deinit();
+
+    try program.run();
+}

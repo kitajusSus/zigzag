@@ -25,6 +25,12 @@ pub const Config = struct {
     mouse: bool = false,
     /// Enable bracketed paste mode
     bracketed_paste: bool = true,
+    /// Custom input file (default: stdin)
+    input: ?std.fs.File = null,
+    /// Custom output file (default: stdout)
+    output: ?std.fs.File = null,
+    /// Enable Kitty keyboard protocol
+    kitty_keyboard: bool = false,
 };
 
 /// Terminal abstraction
@@ -37,11 +43,21 @@ pub const Terminal = struct {
     write_pos: usize = 0,
 
     pub fn init(config: Config) !Terminal {
-        const stdout = std.fs.File.stdout();
-        const stdin = std.fs.File.stdin();
+        const stdout = config.output orelse std.fs.File.stdout();
+        const stdin = config.input orelse std.fs.File.stdin();
+
+        var state = platform.State.init();
+        // Apply custom fd overrides
+        if (builtin.os.tag != .windows) {
+            if (config.input) |inp| state.stdin_fd = inp.handle;
+            if (config.output) |out| state.stdout_fd = out.handle;
+        } else {
+            if (config.input) |inp| state.stdin_handle = inp.handle;
+            if (config.output) |out| state.stdout_handle = out.handle;
+        }
 
         var term = Terminal{
-            .state = platform.State.init(),
+            .state = state,
             .config = config,
             .stdout = stdout,
             .stdin = stdin,
@@ -55,7 +71,7 @@ pub const Terminal = struct {
         self.cleanup() catch {};
     }
 
-    fn setup(self: *Terminal) !void {
+    pub fn setup(self: *Terminal) !void {
         // Setup signal handlers
         platform.setupSignals() catch {};
 
@@ -83,6 +99,11 @@ pub const Terminal = struct {
             try self.writeBytes(ansi.bracketed_paste_enable);
         }
 
+        // Enable Kitty keyboard protocol
+        if (self.config.kitty_keyboard) {
+            try self.writeBytes(ansi.kitty_keyboard_enable);
+        }
+
         // Clear screen
         try self.writeBytes(ansi.screen_clear);
         try self.writeBytes(ansi.cursor_home);
@@ -90,7 +111,12 @@ pub const Terminal = struct {
         try self.flush();
     }
 
-    fn cleanup(self: *Terminal) !void {
+    pub fn cleanup(self: *Terminal) !void {
+        // Disable Kitty keyboard protocol
+        if (self.config.kitty_keyboard) {
+            try self.writeBytes(ansi.kitty_keyboard_disable);
+        }
+
         // Disable bracketed paste
         if (self.config.bracketed_paste) {
             try self.writeBytes(ansi.bracketed_paste_disable);

@@ -15,6 +15,9 @@ pub fn Cmd(comptime Msg: type) type {
         /// Request a tick after the specified duration (nanoseconds)
         tick: u64,
 
+        /// Request repeating tick at interval (nanoseconds)
+        every: u64,
+
         /// Execute a batch of commands
         batch: []const Cmd(Msg),
 
@@ -26,6 +29,21 @@ pub fn Cmd(comptime Msg: type) type {
 
         /// Execute a custom function that produces a message
         perform: *const fn () ?Msg,
+
+        /// Suspend the program (Ctrl+Z behavior)
+        suspend_process,
+
+        /// Runtime terminal commands
+        enable_mouse,
+        disable_mouse,
+        show_cursor,
+        hide_cursor,
+        enter_alt_screen,
+        exit_alt_screen,
+        set_title: []const u8,
+
+        /// Print a line above the program output
+        println: []const u8,
 
         const Self = @This();
 
@@ -47,6 +65,16 @@ pub fn Cmd(comptime Msg: type) type {
         /// Request a tick after seconds
         pub fn tickSec(sec: u64) Self {
             return .{ .tick = sec * std.time.ns_per_s };
+        }
+
+        /// Request a repeating tick every `ms` milliseconds
+        pub fn everyMs(ms: u64) Self {
+            return .{ .every = ms * std.time.ns_per_ms };
+        }
+
+        /// Request a repeating tick every `sec` seconds
+        pub fn everySec(sec: u64) Self {
+            return .{ .every = sec * std.time.ns_per_s };
         }
 
         /// Create a batch of commands

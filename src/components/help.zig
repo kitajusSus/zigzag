@@ -64,6 +64,14 @@ pub const Help = struct {
         self.bindings.deinit();
     }
 
+    /// Create a Help component from a KeyMap
+    pub fn fromKeyMap(allocator: std.mem.Allocator, keymap: anytype) !Help {
+        var help = Help.init(allocator);
+        const bindings = try keymap.toHelpBindings(allocator);
+        try help.setBindings(bindings);
+        return help;
+    }
+
     /// Add a key binding
     pub fn addBinding(self: *Help, key: []const u8, description: []const u8) !void {
         try self.bindings.append(.{
