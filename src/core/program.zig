@@ -110,8 +110,30 @@ pub fn Program(comptime Model: type) type {
             self.filter = f;
         }
 
-        /// Run the program
+        /// Run the program with the built-in event loop.
+        /// For custom event loops, use `start()` + `tick()` instead.
         pub fn run(self: *Self) !void {
+            try self.start();
+
+            // Main event loop
+            while (self.running) {
+                try self.tick();
+            }
+        }
+
+        /// Initialize the terminal and model without entering the event loop.
+        /// After calling this, drive the program manually by calling `tick()`
+        /// in your own loop. Check `isRunning()` to know when to stop.
+        ///
+        /// Example:
+        /// ```
+        /// try program.start();
+        /// while (program.isRunning()) {
+        ///     try program.tick();
+        ///     // ... do other work between frames ...
+        /// }
+        /// ```
+        pub fn start(self: *Self) !void {
             // Initialize logger if configured
             if (self.options.log_file) |log_path| {
                 self.logger = Logger.init(log_path) catch null;
@@ -147,14 +169,15 @@ pub fn Program(comptime Model: type) type {
             try self.processCommand(init_cmd);
 
             self.running = true;
-
-            // Main event loop
-            while (self.running) {
-                try self.tick();
-            }
         }
 
-        fn tick(self: *Self) !void {
+        /// Returns true if the program is still running.
+        pub fn isRunning(self: *const Self) bool {
+            return self.running;
+        }
+
+        /// Execute a single frame: poll input, process events, render.
+        pub fn tick(self: *Self) !void {
             const now = std.time.nanoTimestamp();
             const delta = @as(u64, @intCast(now - self.last_frame_time));
 
