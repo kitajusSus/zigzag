@@ -68,7 +68,7 @@ pub const Terminal = struct {
     }
 
     pub fn deinit(self: *Terminal) void {
-        self.cleanup() catch {};
+        self.cleanup();
     }
 
     pub fn setup(self: *Terminal) !void {
@@ -81,6 +81,7 @@ pub const Terminal = struct {
         // Enter alternate screen
         if (self.config.alt_screen) {
             try self.writeBytes(ansi.alt_screen_enter);
+            self.state.in_alt_screen = true;
         }
 
         // Hide cursor
@@ -111,40 +112,40 @@ pub const Terminal = struct {
         try self.flush();
     }
 
-    pub fn cleanup(self: *Terminal) !void {
+    pub fn cleanup(self: *Terminal) void {
         // Disable Kitty keyboard protocol
         if (self.config.kitty_keyboard) {
-            try self.writeBytes(ansi.kitty_keyboard_disable);
+            self.writeBytes(ansi.kitty_keyboard_disable) catch {};
         }
 
         // Disable bracketed paste
         if (self.config.bracketed_paste) {
-            try self.writeBytes(ansi.bracketed_paste_disable);
+            self.writeBytes(ansi.bracketed_paste_disable) catch {};
         }
 
         // Disable mouse
         if (self.state.mouse_enabled) {
-            try self.writeBytes("\x1b[?1006l\x1b[?1003l");
+            self.writeBytes("\x1b[?1006l\x1b[?1003l") catch {};
             self.state.mouse_enabled = false;
         }
 
         // Show cursor
         if (self.config.hide_cursor) {
-            try self.writeBytes(ansi.cursor_show);
+            self.writeBytes(ansi.cursor_show) catch {};
         }
 
         // Exit alternate screen
         if (self.state.in_alt_screen) {
-            try self.writeBytes(ansi.alt_screen_exit);
+            self.writeBytes(ansi.alt_screen_exit) catch {};
             self.state.in_alt_screen = false;
         }
 
         // Reset attributes
-        try self.writeBytes(ansi.reset);
+        self.writeBytes(ansi.reset) catch {};
 
-        try self.flush();
+        self.flush() catch {};
 
-        // Restore terminal mode
+        // Restore terminal mode — always runs even if writes above failed
         platform.disableRawMode(&self.state);
     }
 

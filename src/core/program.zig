@@ -316,7 +316,7 @@ pub fn Program(comptime Model: type) type {
 
             // Cleanup terminal
             if (self.terminal) |*term| {
-                term.cleanup() catch {};
+                term.cleanup();
             }
 
             // Raise SIGTSTP to suspend process
