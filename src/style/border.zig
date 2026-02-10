@@ -2,6 +2,7 @@
 //! Provides various border character sets and drawing functions.
 
 const std = @import("std");
+const measure = @import("../layout/measure.zig");
 
 /// Border character set
 pub const BorderChars = struct {
@@ -298,22 +299,7 @@ pub fn drawBorder(
     return result.toOwnedSlice();
 }
 
-/// Calculate visible width (excluding ANSI sequences)
+/// Calculate visible width (excluding ANSI sequences), with proper Unicode width.
 fn visibleWidth(str: []const u8) usize {
-    var width: usize = 0;
-    var in_escape = false;
-
-    for (str) |c| {
-        if (c == 0x1b) {
-            in_escape = true;
-        } else if (in_escape) {
-            if ((c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z')) {
-                in_escape = false;
-            }
-        } else {
-            width += 1;
-        }
-    }
-
-    return width;
+    return measure.width(str);
 }

@@ -5,6 +5,7 @@ const std = @import("std");
 const keys = @import("../input/keys.zig");
 const style = @import("../style/style.zig");
 const measure = @import("../layout/measure.zig");
+const unicode = @import("../unicode.zig");
 
 pub const Viewport = struct {
     allocator: std.mem.Allocator,
@@ -242,22 +243,38 @@ pub const Viewport = struct {
         var col: usize = 0;
         var i: usize = 0;
 
-        // Skip to start column
+        // Skip to start column (using display widths)
         while (i < line.len and col < start_col) {
             const byte_len = std.unicode.utf8ByteSequenceLength(line[i]) catch 1;
+            if (i + byte_len <= line.len) {
+                const cp = std.unicode.utf8Decode(line[i..][0..byte_len]) catch {
+                    i += 1;
+                    col += 1;
+                    continue;
+                };
+                col += unicode.charWidth(cp);
+            }
             i += byte_len;
-            col += 1;
         }
 
-        // Copy characters up to max_width
+        // Copy characters up to max_width (using display widths)
         var output_width: usize = 0;
         while (i < line.len and output_width < max_width) {
             const byte_len = std.unicode.utf8ByteSequenceLength(line[i]) catch 1;
             if (i + byte_len <= line.len) {
+                const cp = std.unicode.utf8Decode(line[i..][0..byte_len]) catch {
+                    try result.append(line[i]);
+                    i += 1;
+                    output_width += 1;
+                    continue;
+                };
+                const cw = unicode.charWidth(cp);
+                // Wide char would exceed max_width
+                if (output_width + cw > max_width) break;
                 try result.appendSlice(line[i..][0..byte_len]);
+                output_width += cw;
             }
             i += byte_len;
-            output_width += 1;
         }
 
         return result.toOwnedSlice();

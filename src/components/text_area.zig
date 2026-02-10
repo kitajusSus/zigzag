@@ -6,6 +6,7 @@ const keys = @import("../input/keys.zig");
 const style_mod = @import("../style/style.zig");
 const Color = @import("../style/color.zig").Color;
 const measure = @import("../layout/measure.zig");
+const unicode = @import("../unicode.zig");
 
 pub const TextArea = struct {
     allocator: std.mem.Allocator,
@@ -388,12 +389,13 @@ pub const TextArea = struct {
             self.viewport_row = self.cursor_row - self.height + 1;
         }
 
-        // Horizontal scrolling
+        // Horizontal scrolling using display columns
         const effective_width = self.width -| (if (self.line_numbers) @as(u16, 5) else 0);
-        if (self.cursor_col < self.viewport_col) {
-            self.viewport_col = self.cursor_col;
-        } else if (self.cursor_col >= self.viewport_col + effective_width) {
-            self.viewport_col = self.cursor_col - effective_width + 1;
+        const display_col = self.cursorDisplayCol();
+        if (display_col < self.viewport_col) {
+            self.viewport_col = display_col;
+        } else if (display_col >= self.viewport_col + effective_width) {
+            self.viewport_col = display_col - effective_width + 1;
         }
     }
 
@@ -449,11 +451,18 @@ pub const TextArea = struct {
         var col: usize = 0;
         var byte_idx: usize = 0;
 
-        // Skip to viewport_col
+        // Skip to viewport_col (using display columns)
         while (col < self.viewport_col and byte_idx < line.len) {
             const byte_len = std.unicode.utf8ByteSequenceLength(line[byte_idx]) catch 1;
+            if (byte_idx + byte_len <= line.len) {
+                const cp = std.unicode.utf8Decode(line[byte_idx..][0..byte_len]) catch {
+                    byte_idx += 1;
+                    col += 1;
+                    continue;
+                };
+                col += unicode.charWidth(cp);
+            }
             byte_idx += byte_len;
-            col += 1;
         }
 
         // Render visible portion
@@ -462,7 +471,18 @@ pub const TextArea = struct {
             const is_cursor = is_cursor_line and self.focused and byte_idx == self.cursor_col;
 
             const byte_len = std.unicode.utf8ByteSequenceLength(line[byte_idx]) catch 1;
+            if (byte_idx + byte_len > line.len) break;
             const char_slice = line[byte_idx..][0..byte_len];
+
+            const cp = std.unicode.utf8Decode(line[byte_idx..][0..byte_len]) catch {
+                byte_idx += 1;
+                rendered_width += 1;
+                continue;
+            };
+            const cw = unicode.charWidth(cp);
+
+            // Wide char won't fit — stop
+            if (rendered_width + cw > max_width) break;
 
             if (is_cursor) {
                 const styled = try self.cursor_style.render(allocator, char_slice);
@@ -473,8 +493,8 @@ pub const TextArea = struct {
             }
 
             byte_idx += byte_len;
-            col += 1;
-            rendered_width += 1;
+            col += cw;
+            rendered_width += cw;
         }
 
         // Cursor at end of line
@@ -489,5 +509,25 @@ pub const TextArea = struct {
             try writer.writeByte(' ');
             rendered_width += 1;
         }
+    }
+
+    /// Convert byte-offset cursor_col to display column width.
+    fn cursorDisplayCol(self: *const TextArea) usize {
+        const line = self.lines.items[self.cursor_row];
+        var display_col: usize = 0;
+        var byte_idx: usize = 0;
+        while (byte_idx < self.cursor_col and byte_idx < line.items.len) {
+            const byte_len = std.unicode.utf8ByteSequenceLength(line.items[byte_idx]) catch 1;
+            if (byte_idx + byte_len <= line.items.len) {
+                const cp = std.unicode.utf8Decode(line.items[byte_idx..][0..byte_len]) catch {
+                    byte_idx += 1;
+                    display_col += 1;
+                    continue;
+                };
+                display_col += unicode.charWidth(cp);
+            }
+            byte_idx += byte_len;
+        }
+        return display_col;
     }
 };

@@ -9,6 +9,7 @@ const Tab = enum {
     data,
     files,
     editor,
+    unicode,
 
     pub fn name(self: Tab) []const u8 {
         return switch (self) {
@@ -16,6 +17,7 @@ const Tab = enum {
             .data => "Data",
             .files => "Files",
             .editor => "Editor",
+            .unicode => "Unicode",
         };
     }
 
@@ -180,7 +182,7 @@ const Model = struct {
         self.show_quit_confirm = false;
 
         self.help = zz.components.Help.init(ctx.persistent_allocator);
-        self.help.addBinding("1-4", "tabs") catch {};
+        self.help.addBinding("1-5", "tabs") catch {};
         self.help.addBinding("Tab", "next tab") catch {};
         self.help.addBinding("Ctrl+Q", "quit") catch {};
 
@@ -251,22 +253,25 @@ const Model = struct {
                         '2' => self.active_tab = .data,
                         '3' => self.active_tab = .files,
                         '4' => self.active_tab = .editor,
+                        '5' => self.active_tab = .unicode,
                         else => self.handleTabKey(k),
                     },
                     .tab => {
                         if (k.modifiers.shift) {
                             self.active_tab = switch (self.active_tab) {
-                                .dashboard => .editor,
+                                .dashboard => .unicode,
                                 .data => .dashboard,
                                 .files => .data,
                                 .editor => .files,
+                                .unicode => .editor,
                             };
                         } else {
                             self.active_tab = switch (self.active_tab) {
                                 .dashboard => .data,
                                 .data => .files,
                                 .files => .editor,
-                                .editor => .dashboard,
+                                .editor => .unicode,
+                                .unicode => .dashboard,
                             };
                         }
                     },
@@ -354,6 +359,7 @@ const Model = struct {
             .editor => {
                 self.text_area.handleKey(k);
             },
+            .unicode => {},
         }
     }
 
@@ -389,7 +395,7 @@ const Model = struct {
         var result = std.array_list.Managed(u8).init(ctx.allocator);
         const writer = result.writer();
 
-        const tabs = [_]Tab{ .dashboard, .data, .files, .editor };
+        const tabs = [_]Tab{ .dashboard, .data, .files, .editor, .unicode };
         for (tabs, 0..) |tab, i| {
             if (i > 0) try writer.writeAll("  ");
 
@@ -429,6 +435,7 @@ const Model = struct {
             .data => self.renderDataTab(ctx),
             .files => self.renderFilesTab(ctx),
             .editor => self.renderEditorTab(ctx),
+            .unicode => renderUnicodeTab(ctx),
         };
     }
 
@@ -665,10 +672,111 @@ const Model = struct {
         return box_style.render(ctx.allocator, content);
     }
 
+    fn renderUnicodeTab(ctx: *const zz.Context) ![]const u8 {
+        const alloc = ctx.allocator;
+
+        // -- CJK Box --
+        var cjk_header_style = zz.Style{};
+        cjk_header_style = cjk_header_style.bold(true);
+        cjk_header_style = cjk_header_style.fg(zz.Color.hex("#FF6B6B"));
+        cjk_header_style = cjk_header_style.inline_style(true);
+        const cjk_header = try cjk_header_style.render(alloc, "CJK Characters");
+
+        var cjk_style = zz.Style{};
+        cjk_style = cjk_style.borderAll(zz.Border.rounded);
+        cjk_style = cjk_style.borderForeground(zz.Color.hex("#FF6B6B"));
+        cjk_style = cjk_style.paddingLeft(1).paddingRight(1);
+        cjk_style = cjk_style.width(30);
+
+        const cjk_content = try std.fmt.allocPrint(alloc, "{s}\n\n  \u{4F60}\u{597D}\u{4E16}\u{754C}    (Chinese)\n  \u{3053}\u{3093}\u{306B}\u{3061}\u{306F}  (Japanese)\n  \u{C548}\u{B155}\u{D558}\u{C138}\u{C694}  (Korean)", .{cjk_header});
+
+        const cjk_box = try cjk_style.render(alloc, cjk_content);
+
+        // -- Emoji Box --
+        var emoji_header_style = zz.Style{};
+        emoji_header_style = emoji_header_style.bold(true);
+        emoji_header_style = emoji_header_style.fg(zz.Color.hex("#4ECDC4"));
+        emoji_header_style = emoji_header_style.inline_style(true);
+        const emoji_header = try emoji_header_style.render(alloc, "Emoji");
+
+        var emoji_style = zz.Style{};
+        emoji_style = emoji_style.borderAll(zz.Border.rounded);
+        emoji_style = emoji_style.borderForeground(zz.Color.hex("#4ECDC4"));
+        emoji_style = emoji_style.paddingLeft(1).paddingRight(1);
+        emoji_style = emoji_style.width(30);
+
+        const emoji_content = try std.fmt.allocPrint(alloc, "{s}\n\n  \u{1F680} Rocket     \u{2615} Coffee\n  \u{1F4A9} Fun        \u{2B50} Star\n  \u{1F600} Grinning   \u{2764} Heart", .{emoji_header});
+
+        const emoji_box = try emoji_style.render(alloc, emoji_content);
+
+        // -- Top row --
+        const top_row = try zz.joinHorizontal(alloc, &.{ cjk_box, "  ", emoji_box });
+
+        // -- Fullwidth/Halfwidth comparison box --
+        var fw_header_style = zz.Style{};
+        fw_header_style = fw_header_style.bold(true);
+        fw_header_style = fw_header_style.fg(zz.Color.yellow());
+        fw_header_style = fw_header_style.inline_style(true);
+        const fw_header = try fw_header_style.render(alloc, "Width Comparison");
+
+        var fw_style = zz.Style{};
+        fw_style = fw_style.borderAll(zz.Border.rounded);
+        fw_style = fw_style.borderForeground(zz.Color.yellow());
+        fw_style = fw_style.paddingLeft(1).paddingRight(1);
+
+        const fw_content = try std.fmt.allocPrint(alloc, "{s}\n\n  Fullwidth : \u{FF21}\u{FF22}\u{FF23}\u{FF24}\u{FF25}   (5 chars = 10 cols)\n  Halfwidth : ABCDE        (5 chars =  5 cols)\n  Mixed     : A\u{FF22}C\u{FF24}E        (5 chars =  7 cols)", .{fw_header});
+
+        const fw_box = try fw_style.render(alloc, fw_content);
+
+        // -- Combining characters box --
+        var comb_header_style = zz.Style{};
+        comb_header_style = comb_header_style.bold(true);
+        comb_header_style = comb_header_style.fg(zz.Color.magenta());
+        comb_header_style = comb_header_style.inline_style(true);
+        const comb_header = try comb_header_style.render(alloc, "Combining Characters");
+
+        var comb_style = zz.Style{};
+        comb_style = comb_style.borderAll(zz.Border.rounded);
+        comb_style = comb_style.borderForeground(zz.Color.magenta());
+        comb_style = comb_style.paddingLeft(1).paddingRight(1);
+
+        const comb_content = try std.fmt.allocPrint(alloc, "{s}\n\n  e\u{0301} = e + combining acute   (1 col)\n  a\u{030A} = a + combining ring     (1 col)\n  o\u{0308} = o + combining diaeresis (1 col)\n  n\u{0303} = n + combining tilde     (1 col)", .{comb_header});
+
+        const comb_box = try comb_style.render(alloc, comb_content);
+
+        // -- Alignment demo --
+        var align_header_style = zz.Style{};
+        align_header_style = align_header_style.bold(true);
+        align_header_style = align_header_style.fg(zz.Color.green());
+        align_header_style = align_header_style.inline_style(true);
+        const align_header = try align_header_style.render(alloc, "Alignment Demo");
+
+        var align_style = zz.Style{};
+        align_style = align_style.borderAll(zz.Border.double);
+        align_style = align_style.borderForeground(zz.Color.green());
+        align_style = align_style.paddingLeft(1).paddingRight(1);
+
+        const align_content = try std.fmt.allocPrint(alloc, "{s}\n\n  |hello     |  5 cols\n  |\u{4F60}\u{597D}      |  4 cols (2 wide chars)\n  |\u{1F680}\u{1F4A9}\u{2615}   |  6 cols (3 emojis)\n  |caf\u{00E9}      |  4 cols (precomposed)\n  |cafe\u{0301}      |  4 cols (combining)", .{align_header});
+
+        const align_box = try align_style.render(alloc, align_content);
+
+        // -- Middle row --
+        const mid_row = try zz.joinHorizontal(alloc, &.{ fw_box, "  ", comb_box });
+
+        // -- Hint --
+        var hint_style = zz.Style{};
+        hint_style = hint_style.fg(zz.Color.gray(10));
+        hint_style = hint_style.italic(true);
+        hint_style = hint_style.inline_style(true);
+        const hint = try hint_style.render(alloc, "All text above is laid out using Unicode-aware display width.");
+
+        return zz.joinVertical(alloc, &.{ top_row, "", mid_row, "", align_box, "", hint });
+    }
+
     fn renderStatusBar(self: *const Model, ctx: *const zz.Context) ![]const u8 {
         _ = self;
         var help_comp = zz.components.Help.init(ctx.allocator);
-        try help_comp.addBinding("1-4", "tabs");
+        try help_comp.addBinding("1-5", "tabs");
         try help_comp.addBinding("Tab", "next");
         try help_comp.addBinding("Ctrl+Q", "quit");
         help_comp.setMaxWidth(ctx.width);

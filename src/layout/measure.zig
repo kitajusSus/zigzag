@@ -2,6 +2,7 @@
 //! Properly handles ANSI escape sequences and Unicode characters.
 
 const std = @import("std");
+const unicode = @import("../unicode.zig");
 
 /// Calculate the visible width of a string (excluding ANSI escape sequences)
 pub fn width(str: []const u8) usize {
@@ -73,8 +74,7 @@ pub fn width(str: []const u8) usize {
                 continue;
             };
 
-            // Estimate character width (simplified - full implementation would use Unicode width tables)
-            w += charWidth(codepoint);
+            w += unicode.charWidth(codepoint);
             i += byte_len;
         } else {
             w += 1;
@@ -104,35 +104,9 @@ pub fn size(str: []const u8) struct { width: usize, height: usize } {
     };
 }
 
-/// Estimate the display width of a Unicode codepoint
-fn charWidth(codepoint: u21) usize {
-    // Zero-width characters
-    if (codepoint == 0x200B or // Zero-width space
-        codepoint == 0x200C or // Zero-width non-joiner
-        codepoint == 0x200D or // Zero-width joiner
-        codepoint == 0xFEFF) // BOM
-    {
-        return 0;
-    }
-
-    // Combining characters (simplified range)
-    if (codepoint >= 0x0300 and codepoint <= 0x036F) return 0;
-
-    // CJK characters (simplified range - double width)
-    if ((codepoint >= 0x4E00 and codepoint <= 0x9FFF) or // CJK Unified Ideographs
-        (codepoint >= 0x3000 and codepoint <= 0x303F) or // CJK Symbols and Punctuation
-        (codepoint >= 0xFF00 and codepoint <= 0xFFEF) or // Fullwidth Forms
-        (codepoint >= 0xAC00 and codepoint <= 0xD7AF)) // Hangul Syllables
-    {
-        return 2;
-    }
-
-    // Emoji (simplified - many emoji are double width)
-    if (codepoint >= 0x1F300 and codepoint <= 0x1F9FF) {
-        return 2;
-    }
-
-    return 1;
+/// Get the display width of a Unicode codepoint using full Unicode tables.
+pub fn charWidth(codepoint: u21) usize {
+    return unicode.charWidth(codepoint);
 }
 
 /// Get the width of a specific line
@@ -261,8 +235,17 @@ pub fn truncate(allocator: std.mem.Allocator, str: []const u8, max_width: usize)
         // Regular character
         const byte_len = std.unicode.utf8ByteSequenceLength(c) catch 1;
         if (i + byte_len <= str.len) {
+            const codepoint = std.unicode.utf8Decode(str[i..][0..byte_len]) catch {
+                try result.append(c);
+                w += 1;
+                i += 1;
+                continue;
+            };
+            const cw = unicode.charWidth(codepoint);
+            // Wide char would exceed target — stop here
+            if (w + cw > target) break;
             try result.appendSlice(str[i..][0..byte_len]);
-            w += 1;
+            w += cw;
             i += byte_len;
         } else {
             try result.append(c);

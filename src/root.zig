@@ -92,6 +92,9 @@ pub const measure = @import("layout/measure.zig");
 pub const join = @import("layout/join.zig");
 pub const place = @import("layout/place.zig");
 
+// Unicode
+pub const unicode = @import("unicode.zig");
+
 // Components
 pub const components = struct {
     pub const TextInput = @import("components/text_input.zig").TextInput;

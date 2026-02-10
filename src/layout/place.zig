@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const measure = @import("measure.zig");
+const unicode = @import("../unicode.zig");
 
 /// Horizontal position
 pub const HPosition = enum {
@@ -132,13 +133,26 @@ pub fn placeAt(
                 if (content_row < content_lines.items.len) {
                     const line = content_lines.items[content_row];
                     if (content_col < measure.width(line)) {
-                        // Find the byte position for this column
+                        // Find the byte position for this display column
                         var byte_pos: usize = 0;
                         var current_col: usize = 0;
                         while (byte_pos < line.len and current_col < content_col) {
                             const byte_len = std.unicode.utf8ByteSequenceLength(line[byte_pos]) catch 1;
+                            if (byte_pos + byte_len <= line.len) {
+                                const cp = std.unicode.utf8Decode(line[byte_pos..][0..byte_len]) catch {
+                                    byte_pos += 1;
+                                    current_col += 1;
+                                    continue;
+                                };
+                                current_col += unicode.charWidth(cp);
+                            }
                             byte_pos += byte_len;
-                            current_col += 1;
+                        }
+
+                        // If we landed inside a wide character, emit space
+                        if (current_col > content_col) {
+                            try writer.writeByte(' ');
+                            continue;
                         }
 
                         if (byte_pos < line.len) {
@@ -200,16 +214,27 @@ pub fn overlay(
             // Try to get content character
             var used_content = false;
             if (content_col < measure.width(content_line)) {
-                // Find byte at column
+                // Find byte at display column
                 var byte_pos: usize = 0;
                 var current_col: usize = 0;
                 while (byte_pos < content_line.len and current_col < content_col) {
                     const byte_len = std.unicode.utf8ByteSequenceLength(content_line[byte_pos]) catch 1;
+                    if (byte_pos + byte_len <= content_line.len) {
+                        const cp = std.unicode.utf8Decode(content_line[byte_pos..][0..byte_len]) catch {
+                            byte_pos += 1;
+                            current_col += 1;
+                            continue;
+                        };
+                        current_col += unicode.charWidth(cp);
+                    }
                     byte_pos += byte_len;
-                    current_col += 1;
                 }
 
-                if (byte_pos < content_line.len and content_line[byte_pos] != ' ') {
+                // If we landed inside a wide character, emit space
+                if (current_col > content_col) {
+                    try writer.writeByte(' ');
+                    used_content = true;
+                } else if (byte_pos < content_line.len and content_line[byte_pos] != ' ') {
                     const byte_len = std.unicode.utf8ByteSequenceLength(content_line[byte_pos]) catch 1;
                     try writer.writeAll(content_line[byte_pos..][0..byte_len]);
                     used_content = true;
@@ -223,11 +248,20 @@ pub fn overlay(
                     var current_col: usize = 0;
                     while (byte_pos < base_line.len and current_col < col) {
                         const byte_len = std.unicode.utf8ByteSequenceLength(base_line[byte_pos]) catch 1;
+                        if (byte_pos + byte_len <= base_line.len) {
+                            const cp = std.unicode.utf8Decode(base_line[byte_pos..][0..byte_len]) catch {
+                                byte_pos += 1;
+                                current_col += 1;
+                                continue;
+                            };
+                            current_col += unicode.charWidth(cp);
+                        }
                         byte_pos += byte_len;
-                        current_col += 1;
                     }
 
-                    if (byte_pos < base_line.len) {
+                    if (current_col > col) {
+                        try writer.writeByte(' ');
+                    } else if (byte_pos < base_line.len) {
                         const byte_len = std.unicode.utf8ByteSequenceLength(base_line[byte_pos]) catch 1;
                         try writer.writeAll(base_line[byte_pos..][0..byte_len]);
                     } else {

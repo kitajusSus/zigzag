@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const ansi = @import("ansi.zig");
+const unicode = @import("../unicode.zig");
 
 /// A cell in the screen buffer
 pub const Cell = struct {
@@ -16,6 +17,8 @@ pub const Cell = struct {
     blink: bool = false,
     reverse: bool = false,
     strikethrough: bool = false,
+    /// True if this cell is the continuation (right half) of a wide character.
+    wide: bool = false,
 
     pub fn eql(self: Cell, other: Cell) bool {
         return self.char == other.char and
@@ -27,7 +30,8 @@ pub const Cell = struct {
             self.underline == other.underline and
             self.blink == other.blink and
             self.reverse == other.reverse and
-            self.strikethrough == other.strikethrough;
+            self.strikethrough == other.strikethrough and
+            self.wide == other.wide;
     }
 
     fn eqlOptColor(a: ?Color, b: ?Color) bool {
@@ -107,12 +111,36 @@ pub const Screen = struct {
 
     pub fn setCell(self: *Screen, x: u16, y: u16, cell: Cell) void {
         if (x >= self.width or y >= self.height) return;
-        self.cells[@as(usize, y) * self.width + x] = cell;
+        const idx = @as(usize, y) * self.width + x;
+
+        // If we're overwriting a wide-char continuation cell, clear the left half
+        if (self.cells[idx].wide and x > 0) {
+            self.cells[idx - 1] = Cell{};
+        }
+        // If we're overwriting the left half of a wide char, clear the continuation
+        if (!self.cells[idx].wide and x + 1 < self.width and self.cells[idx + 1].wide) {
+            self.cells[idx + 1] = Cell{};
+        }
+
+        self.cells[idx] = cell;
+
+        // If this is a wide character, set the continuation cell
+        const cw = unicode.charWidth(cell.char);
+        if (cw == 2 and x + 1 < self.width) {
+            var cont = Cell{};
+            cont.wide = true;
+            cont.fg = cell.fg;
+            cont.bg = cell.bg;
+            self.cells[idx + 1] = cont;
+        }
     }
 
     pub fn setChar(self: *Screen, x: u16, y: u16, char: u21) void {
         if (x >= self.width or y >= self.height) return;
-        self.cells[@as(usize, y) * self.width + x].char = char;
+        var cell = self.cells[@as(usize, y) * self.width + x];
+        cell.char = char;
+        cell.wide = false;
+        self.setCell(x, y, cell);
     }
 
     /// Write a string to the screen at the given position
@@ -122,9 +150,11 @@ pub const Screen = struct {
         var iter = utf8.iterator();
 
         while (iter.nextCodepoint()) |cp| {
-            if (col >= self.width) break;
+            const cw = unicode.charWidth(cp);
+            if (cw == 0) continue; // Skip zero-width characters
+            if (col + cw > self.width) break; // Wide char won't fit
             self.setChar(col, y, cp);
-            col += 1;
+            col += @intCast(cw);
         }
 
         return col - x;
@@ -139,10 +169,19 @@ pub const Screen = struct {
 
         for (0..self.height) |y_usize| {
             const y: u16 = @intCast(y_usize);
-            for (0..self.width) |x_usize| {
+            var x_usize: usize = 0;
+            while (x_usize < self.width) {
                 const x: u16 = @intCast(x_usize);
                 const idx = y_usize * self.width + x_usize;
                 const cell = self.cells[idx];
+
+                // Skip wide continuation cells
+                if (cell.wide) {
+                    x_usize += 1;
+                    need_move = true;
+                    continue;
+                }
+
                 const prev_cell = if (idx < prev.cells.len) prev.cells[idx] else Cell{};
 
                 if (!cell.eql(prev_cell)) {
@@ -161,8 +200,12 @@ pub const Screen = struct {
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch 1;
                     try writer.writeAll(buf[0..len]);
 
-                    last_x = x;
+                    const cw = unicode.charWidth(cell.char);
+                    last_x = if (cw == 2) x + 1 else x;
                     last_y = y;
+                    x_usize += cw;
+                } else {
+                    x_usize += 1;
                 }
             }
         }
@@ -183,9 +226,16 @@ pub const Screen = struct {
                 try writer.writeAll("\r\n");
             }
 
-            for (0..self.width) |x_usize| {
+            var x_usize: usize = 0;
+            while (x_usize < self.width) {
                 const idx = y_usize * self.width + x_usize;
                 const cell = self.cells[idx];
+
+                // Skip wide continuation cells
+                if (cell.wide) {
+                    x_usize += 1;
+                    continue;
+                }
 
                 try applyStyle(writer, &current_cell, cell);
                 current_cell = cell;
@@ -193,6 +243,9 @@ pub const Screen = struct {
                 var buf: [4]u8 = undefined;
                 const len = std.unicode.utf8Encode(cell.char, &buf) catch 1;
                 try writer.writeAll(buf[0..len]);
+
+                const cw = unicode.charWidth(cell.char);
+                x_usize += if (cw > 0) cw else 1;
             }
         }
 
