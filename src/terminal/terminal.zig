@@ -187,7 +187,7 @@ pub const Terminal = struct {
     /// Flush output buffer
     pub fn flush(self: *Terminal) !void {
         if (self.write_pos > 0) {
-            _ = std.posix.write(self.stdout.handle, self.write_buffer[0..self.write_pos]) catch |err| {
+            self.stdout.writeAll(self.write_buffer[0..self.write_pos]) catch |err| {
                 return switch (err) {
                     error.WouldBlock => error.WouldBlock,
                     else => error.BrokenPipe,

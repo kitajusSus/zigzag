@@ -2,6 +2,7 @@
 //! Allows browsing directories and selecting files.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const keys = @import("../input/keys.zig");
 const style_mod = @import("../style/style.zig");
 const Color = @import("../style/color.zig").Color;
@@ -221,8 +222,15 @@ pub const FilePicker = struct {
 
     /// Navigate to home directory
     pub fn navigateHome(self: *FilePicker) !void {
-        const home = std.posix.getenv("HOME") orelse "/";
-        try self.navigate(home);
+        if (comptime builtin.os.tag == .windows) {
+            var env_map = try std.process.getEnvMap(self.allocator);
+            defer env_map.deinit();
+            const home = env_map.get("USERPROFILE") orelse "C:\\";
+            try self.navigate(home);
+        } else {
+            const home = std.posix.getenv("HOME") orelse "/";
+            try self.navigate(home);
+        }
     }
 
     /// Move cursor up

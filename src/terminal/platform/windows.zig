@@ -50,9 +50,9 @@ pub const State = struct {
 };
 
 /// External Windows API declarations
-extern "kernel32" fn GetConsoleMode(hConsole: windows.HANDLE, lpMode: *windows.DWORD) callconv(windows.WINAPI) windows.BOOL;
-extern "kernel32" fn SetConsoleMode(hConsole: windows.HANDLE, dwMode: windows.DWORD) callconv(windows.WINAPI) windows.BOOL;
-extern "kernel32" fn GetConsoleScreenBufferInfo(hConsole: windows.HANDLE, lpInfo: *CONSOLE_SCREEN_BUFFER_INFO) callconv(windows.WINAPI) windows.BOOL;
+extern "kernel32" fn GetConsoleMode(hConsole: windows.HANDLE, lpMode: *windows.DWORD) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn SetConsoleMode(hConsole: windows.HANDLE, dwMode: windows.DWORD) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn GetConsoleScreenBufferInfo(hConsole: windows.HANDLE, lpInfo: *CONSOLE_SCREEN_BUFFER_INFO) callconv(.winapi) windows.BOOL;
 
 const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
     dwSize: COORD,
@@ -184,7 +184,7 @@ pub fn readInput(state: *State, buffer: []u8, timeout_ms: i32) !usize {
     _ = state;
     _ = timeout_ms;
     // On Windows, we use the standard reader which handles VT input
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
     return stdin.read(buffer) catch 0;
 }
 

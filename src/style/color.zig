@@ -2,6 +2,7 @@
 //! Supports ANSI 16, 256, and TrueColor (24-bit) colors.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ansi = @import("../terminal/ansi.zig");
 
 /// Color representation supporting multiple color modes
@@ -281,6 +282,11 @@ pub const ColorProfile = enum {
 
     /// Detect terminal color profile from environment
     pub fn detect() ColorProfile {
+        if (comptime builtin.os.tag == .windows) {
+            // Windows Terminal supports true color VT sequences
+            return .true_color;
+        }
+
         // Check NO_COLOR
         if (std.posix.getenv("NO_COLOR")) |_| {
             return .ascii;
@@ -321,6 +327,10 @@ pub const ColorProfile = enum {
 
 /// Detect if terminal has a dark background
 pub fn hasDarkBackground() bool {
+    if (comptime builtin.os.tag == .windows) {
+        return true;
+    }
+
     if (std.posix.getenv("COLORFGBG")) |val| {
         // Format: "foreground;background"
         if (std.mem.lastIndexOfScalar(u8, val, ';')) |idx| {
