@@ -130,3 +130,23 @@ test "parseAll multiple keys" {
     try testing.expect(events[0] == .key);
     try testing.expectEqual(@as(u21, 'a'), events[0].key.key.char);
 }
+
+test "TextInput accepts multi-character paste commits (IME-like)" {
+    var input = zz.TextInput.init(testing.allocator);
+    defer input.deinit();
+
+    input.handleKey(.{ .key = .{ .paste = "中文输入" } });
+
+    try testing.expectEqualStrings("中文输入", input.getValue());
+}
+
+test "TextArea accepts multi-character paste commits (IME-like)" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    area.handleKey(.{ .key = .{ .paste = "中文输入" } });
+
+    const value = try area.getValue(testing.allocator);
+    defer testing.allocator.free(value);
+    try testing.expectEqualStrings("中文输入", value);
+}

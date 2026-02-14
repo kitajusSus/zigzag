@@ -216,6 +216,7 @@ pub const TextInput = struct {
 
         switch (key.key) {
             .char => |c| self.insertChar(c),
+            .paste => |text| self.insertText(text),
             .backspace => self.deleteBackward(),
             .delete => self.deleteForward(),
             .left => self.moveCursorLeft(),
@@ -246,6 +247,35 @@ pub const TextInput = struct {
         // Insert at cursor position
         self.value.insertSlice(self.cursor, buf[0..len]) catch return;
         self.cursor += len;
+    }
+
+    fn insertText(self: *TextInput, text: []const u8) void {
+        var i: usize = 0;
+        while (i < text.len) {
+            if (text[i] == '\r' or text[i] == '\n') {
+                i += 1;
+                continue;
+            }
+
+            const len = std.unicode.utf8ByteSequenceLength(text[i]) catch {
+                self.insertChar(text[i]);
+                i += 1;
+                continue;
+            };
+            if (i + len > text.len) {
+                self.insertChar(text[i]);
+                i += 1;
+                continue;
+            }
+
+            const codepoint = std.unicode.utf8Decode(text[i .. i + len]) catch {
+                self.insertChar(text[i]);
+                i += 1;
+                continue;
+            };
+            self.insertChar(codepoint);
+            i += len;
+        }
     }
 
     fn deleteBackward(self: *TextInput) void {
