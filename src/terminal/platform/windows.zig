@@ -30,6 +30,10 @@ const ENABLE_MOUSE_INPUT: windows.DWORD = 0x0010;
 const ENABLE_WINDOW_INPUT: windows.DWORD = 0x0008;
 const ENABLE_EXTENDED_FLAGS: windows.DWORD = 0x0080;
 const ENABLE_QUICK_EDIT_MODE: windows.DWORD = 0x0040;
+const FILE_TYPE_CHAR: windows.DWORD = 0x0002;
+const FILE_TYPE_PIPE: windows.DWORD = 0x0003;
+const KEY_EVENT: windows.WORD = 0x0001;
+const MOUSE_EVENT: windows.WORD = 0x0002;
 
 /// Terminal state for Windows
 pub const State = struct {
@@ -53,6 +57,31 @@ pub const State = struct {
 extern "kernel32" fn GetConsoleMode(hConsole: windows.HANDLE, lpMode: *windows.DWORD) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn SetConsoleMode(hConsole: windows.HANDLE, dwMode: windows.DWORD) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn GetConsoleScreenBufferInfo(hConsole: windows.HANDLE, lpInfo: *CONSOLE_SCREEN_BUFFER_INFO) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn GetFileType(hFile: windows.HANDLE) callconv(.winapi) windows.DWORD;
+extern "kernel32" fn PeekNamedPipe(
+    hNamedPipe: windows.HANDLE,
+    lpBuffer: ?*anyopaque,
+    nBufferSize: windows.DWORD,
+    lpBytesRead: ?*windows.DWORD,
+    lpTotalBytesAvail: ?*windows.DWORD,
+    lpBytesLeftThisMessage: ?*windows.DWORD,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn GetNumberOfConsoleInputEvents(
+    hConsoleInput: windows.HANDLE,
+    lpcNumberOfEvents: *windows.DWORD,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn PeekConsoleInputW(
+    hConsoleInput: windows.HANDLE,
+    lpBuffer: [*]INPUT_RECORD,
+    nLength: windows.DWORD,
+    lpNumberOfEventsRead: *windows.DWORD,
+) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn ReadConsoleInputW(
+    hConsoleInput: windows.HANDLE,
+    lpBuffer: [*]INPUT_RECORD,
+    nLength: windows.DWORD,
+    lpNumberOfEventsRead: *windows.DWORD,
+) callconv(.winapi) windows.BOOL;
 
 const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
     dwSize: COORD,
@@ -72,6 +101,31 @@ const SMALL_RECT = extern struct {
     Top: windows.SHORT,
     Right: windows.SHORT,
     Bottom: windows.SHORT,
+};
+
+const INPUT_RECORD = extern struct {
+    EventType: windows.WORD,
+    Event: INPUT_EVENT,
+};
+
+const INPUT_EVENT = extern union {
+    KeyEvent: KEY_EVENT_RECORD,
+    MouseEvent: [16]u8,
+    WindowBufferSizeEvent: [4]u8,
+    MenuEvent: [4]u8,
+    FocusEvent: [4]u8,
+};
+
+const KEY_EVENT_RECORD = extern struct {
+    bKeyDown: windows.BOOL,
+    wRepeatCount: windows.WORD,
+    wVirtualKeyCode: windows.WORD,
+    wVirtualScanCode: windows.WORD,
+    uChar: extern union {
+        UnicodeChar: windows.WCHAR,
+        AsciiChar: windows.CHAR,
+    },
+    dwControlKeyState: windows.DWORD,
 };
 
 /// Check if a handle is valid
@@ -111,8 +165,9 @@ pub fn enableRawMode(state: *State) !void {
         return TerminalError.GetConsoleFailed;
     }
 
-    // Set input mode for raw input with VT processing
-    const input_mode: windows.DWORD = ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_WINDOW_INPUT;
+    // Set input mode for raw input with VT processing.
+    // Avoid WINDOW_INPUT because it can signal wait handles without producing bytes for ReadFile.
+    const input_mode: windows.DWORD = ENABLE_VIRTUAL_TERMINAL_INPUT;
     if (SetConsoleMode(state.stdin_handle, input_mode) == 0) {
         return TerminalError.SetConsoleFailed;
     }
@@ -194,9 +249,54 @@ pub fn readInput(state: *State, buffer: []u8, timeout_ms: i32) !usize {
         else => return 0,
     };
 
+    const file_type = GetFileType(state.stdin_handle);
+
+    // ConPTY/Windows Terminal can expose stdin as a pipe. Ensure there are bytes before reading.
+    if (file_type == FILE_TYPE_PIPE) {
+        var available: windows.DWORD = 0;
+        if (PeekNamedPipe(state.stdin_handle, null, 0, null, &available, null) == 0 or available == 0) {
+            return 0;
+        }
+    }
+
+    // Console handles may wake due non-byte events (focus/menu/window-size). Drain those first.
+    if (file_type == FILE_TYPE_CHAR and !hasReadableConsoleInput(state.stdin_handle)) {
+        return 0;
+    }
+
     // Read from the configured stdin handle after it is signaled as readable.
     const stdin: std.fs.File = .{ .handle = state.stdin_handle };
     return stdin.read(buffer) catch 0;
+}
+
+fn hasReadableConsoleInput(handle: windows.HANDLE) bool {
+    var record_buf: [1]INPUT_RECORD = undefined;
+
+    while (true) {
+        var event_count: windows.DWORD = 0;
+        if (GetNumberOfConsoleInputEvents(handle, &event_count) == 0 or event_count == 0) {
+            return false;
+        }
+
+        var peeked: windows.DWORD = 0;
+        if (PeekConsoleInputW(handle, &record_buf, 1, &peeked) == 0 or peeked == 0) {
+            return false;
+        }
+
+        const record = record_buf[0];
+        switch (record.EventType) {
+            KEY_EVENT => {
+                if (record.Event.KeyEvent.bKeyDown != 0) return true;
+            },
+            MOUSE_EVENT => return true,
+            else => {},
+        }
+
+        var consumed: windows.DWORD = 0;
+        if (ReadConsoleInputW(handle, &record_buf, 1, &consumed) == 0 or consumed == 0) {
+            return false;
+        }
+    }
 }
 
 /// Flush output
