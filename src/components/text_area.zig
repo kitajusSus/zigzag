@@ -640,11 +640,25 @@ pub const TextArea = struct {
                     const styled = try self.placeholder_style.render(allocator, self.placeholder);
                     defer allocator.free(styled);
                     try writer.writeAll(styled);
+                    // Pad to full width
+                    const placeholder_width = measure.width(self.placeholder);
+                    const max_width: usize = text_width;
+                    var rendered_width = @min(placeholder_width, max_width);
+                    while (rendered_width < max_width) {
+                        try writer.writeByte(' ');
+                        rendered_width += 1;
+                    }
                     continue;
                 }
 
                 // Render line content with cursor
                 try self.renderLine(writer, allocator, line.items, line_idx, text_width);
+            } else {
+                // Pad empty rows to full width
+                var i: usize = 0;
+                while (i < text_width) : (i += 1) {
+                    try writer.writeByte(' ');
+                }
             }
         }
 

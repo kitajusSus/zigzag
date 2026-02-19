@@ -258,3 +258,202 @@ test "TextArea word_wrap keeps cursor visible by wrapped row" {
     defer testing.allocator.free(plain);
     try testing.expectEqualStrings("fghij\nk    ", plain);
 }
+
+// ============================================================================
+// Tests for TextArea setSize/view fix - placeholder and empty row padding
+// ============================================================================
+
+test "TextArea setSize without setValue pads placeholder to full width" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    // Initialize with placeholder
+    area.placeholder = "Type here";
+
+    // Set size WITHOUT calling setValue (the bug scenario)
+    area.setSize(50, 3);
+
+    // Render view
+    const rendered = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered);
+    const plain = try stripAnsi(testing.allocator, rendered);
+    defer testing.allocator.free(plain);
+
+    // Verify first line contains placeholder padded to 50 chars
+    var lines = std.mem.splitScalar(u8, plain, '\n');
+    const first_line = lines.next().?;
+    try testing.expectEqual(@as(usize, 50), first_line.len);
+    try testing.expect(std.mem.startsWith(u8, first_line, "Type here"));
+}
+
+test "TextArea pads empty rows to full width" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    // Set content to just one line
+    try area.setValue("Single line");
+    area.setSize(30, 5);
+
+    // Render view
+    const rendered = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered);
+    const plain = try stripAnsi(testing.allocator, rendered);
+    defer testing.allocator.free(plain);
+
+    // Split into lines
+    var lines = std.mem.splitScalar(u8, plain, '\n');
+
+    // First line should have content padded to 30 chars
+    const line0 = lines.next().?;
+    try testing.expectEqual(@as(usize, 30), line0.len);
+    try testing.expect(std.mem.startsWith(u8, line0, "Single line"));
+
+    // Remaining lines should be padded to 30 chars of spaces
+    var line_count: usize = 1;
+    while (lines.next()) |line| : (line_count += 1) {
+        if (line_count >= 5) break;
+        try testing.expectEqual(@as(usize, 30), line.len);
+        // Verify it's all spaces
+        for (line) |c| {
+            try testing.expectEqual(@as(u8, ' '), c);
+        }
+    }
+}
+
+test "TextArea renders at correct width after setSize without setValue" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    // Initialize with placeholder (common usage pattern)
+    area.placeholder = "Enter text...";
+    area.placeholder_style = blk: {
+        var s = zz.style.Style{};
+        s = s.fg(zz.Color.gray(12));
+        s = s.inline_style(true);
+        break :blk s;
+    };
+
+    // Simulate resize to 80x24 terminal
+    area.setSize(80, 24);
+
+    // Render without calling setValue
+    const rendered = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered);
+
+    // Verify content length is reasonable for 80x24 with ANSI codes
+    // Expected: ~80 * 24 = 1920 chars + newlines + ANSI codes
+    try testing.expect(rendered.len > 1000);
+
+    // Strip ANSI and verify dimensions
+    const plain = try stripAnsi(testing.allocator, rendered);
+    defer testing.allocator.free(plain);
+
+    var lines = std.mem.splitScalar(u8, plain, '\n');
+    var line_count: usize = 0;
+    while (lines.next()) |line| : (line_count += 1) {
+        if (line_count >= 24) break;
+        try testing.expectEqual(@as(usize, 80), line.len);
+    }
+    try testing.expectEqual(@as(usize, 24), line_count);
+}
+
+test "TextArea multiple resize operations maintain correct width" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    area.placeholder = "Test";
+
+    // First resize to small
+    area.setSize(20, 5);
+    const rendered1 = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered1);
+    const plain1 = try stripAnsi(testing.allocator, rendered1);
+    defer testing.allocator.free(plain1);
+
+    var lines1 = std.mem.splitScalar(u8, plain1, '\n');
+    const first_line1 = lines1.next().?;
+    try testing.expectEqual(@as(usize, 20), first_line1.len);
+
+    // Then resize to large
+    area.setSize(100, 10);
+    const rendered2 = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered2);
+    const plain2 = try stripAnsi(testing.allocator, rendered2);
+    defer testing.allocator.free(plain2);
+
+    var lines2 = std.mem.splitScalar(u8, plain2, '\n');
+    const first_line2 = lines2.next().?;
+    try testing.expectEqual(@as(usize, 100), first_line2.len);
+
+    // Then resize back to medium
+    area.setSize(50, 3);
+    const rendered3 = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered3);
+    const plain3 = try stripAnsi(testing.allocator, rendered3);
+    defer testing.allocator.free(plain3);
+
+    var lines3 = std.mem.splitScalar(u8, plain3, '\n');
+    const first_line3 = lines3.next().?;
+    try testing.expectEqual(@as(usize, 50), first_line3.len);
+}
+
+test "TextArea empty content renders all rows at correct width" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    // Don't set any content or placeholder
+    area.setSize(40, 10);
+
+    const rendered = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered);
+    const plain = try stripAnsi(testing.allocator, rendered);
+    defer testing.allocator.free(plain);
+
+    // All 10 rows should be 40 spaces
+    var lines = std.mem.splitScalar(u8, plain, '\n');
+    var line_count: usize = 0;
+    while (lines.next()) |line| : (line_count += 1) {
+        if (line_count >= 10) break;
+        try testing.expectEqual(@as(usize, 40), line.len);
+        // Verify all spaces
+        for (line) |c| {
+            try testing.expectEqual(@as(u8, ' '), c);
+        }
+    }
+    try testing.expectEqual(@as(usize, 10), line_count);
+}
+
+test "TextArea partial content fills remaining rows" {
+    var area = zz.TextArea.init(testing.allocator);
+    defer area.deinit();
+
+    // Set 3 lines of content
+    try area.setValue("Line 1\nLine 2\nLine 3");
+    area.setSize(25, 10);
+
+    const rendered = try area.view(testing.allocator);
+    defer testing.allocator.free(rendered);
+    const plain = try stripAnsi(testing.allocator, rendered);
+    defer testing.allocator.free(plain);
+
+    var lines = std.mem.splitScalar(u8, plain, '\n');
+
+    // First 3 lines have content
+    try testing.expect(std.mem.startsWith(u8, lines.next().?, "Line 1"));
+    try testing.expect(std.mem.startsWith(u8, lines.next().?, "Line 2"));
+    try testing.expect(std.mem.startsWith(u8, lines.next().?, "Line 3"));
+
+    // Next 7 lines should be empty (spaces)
+    var empty_count: usize = 0;
+    while (lines.next()) |line| {
+        if (empty_count >= 7) break;
+        try testing.expectEqual(@as(usize, 25), line.len);
+        var all_spaces = true;
+        for (line) |c| {
+            if (c != ' ') all_spaces = false;
+        }
+        try testing.expect(all_spaces);
+        empty_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 7), empty_count);
+}
