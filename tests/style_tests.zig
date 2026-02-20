@@ -63,6 +63,20 @@ test "Style render" {
     // Result should contain ANSI codes and the text
     try testing.expect(result.len > 5); // "Hello" + ANSI codes
     try testing.expect(std.mem.indexOf(u8, result, "Hello") != null);
+    try testing.expect(!std.mem.endsWith(u8, result, "\n"));
+}
+
+test "Style render keeps internal newlines but no trailing newline" {
+    const allocator = testing.allocator;
+
+    var style = zz.Style{};
+    style = style.fg(zz.Color.cyan());
+
+    const result = try style.render(allocator, "A\nB");
+    defer allocator.free(result);
+
+    try testing.expect(std.mem.indexOfScalar(u8, result, '\n') != null);
+    try testing.expect(!std.mem.endsWith(u8, result, "\n"));
 }
 
 test "Border styles exist" {

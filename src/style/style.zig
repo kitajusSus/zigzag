@@ -639,6 +639,10 @@ pub const Style = struct {
             }
         }
 
+        if (!self.inline_mode and result.items.len > 0 and result.items[result.items.len - 1] == '\n') {
+            _ = result.pop();
+        }
+
         return result.toOwnedSlice();
     }
 

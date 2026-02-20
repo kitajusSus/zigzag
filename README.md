@@ -147,10 +147,14 @@ const style = (zz.Style{})
     .alignH(.center);
 
 const output = try style.render(allocator, "Hello, World!");
+// render() does not append an implicit trailing '\n'
 
 // Text transforms
 const upper_style = (zz.Style{}).transform(zz.transforms.uppercase);
 const shouting = try upper_style.render(allocator, "hello"); // "HELLO"
+
+// Inline mode is useful when embedding block-styled output in a single line
+const inline = (zz.Style{}).fg(zz.Color.cyan()).inline_style(true);
 
 // Whitespace formatting controls
 const ws_style = (zz.Style{})
