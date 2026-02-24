@@ -210,7 +210,7 @@ pub fn Program(comptime Model: type) type {
                 16_666_666; // ~60fps default
 
             if (delta < min_frame_time_ns) {
-                std.Thread.sleep(min_frame_time_ns - delta);
+                sleepNs(min_frame_time_ns - delta);
             }
 
             const frame_time = self.clock.read();
@@ -496,6 +496,58 @@ pub fn Program(comptime Model: type) type {
                         try term.flush();
                     }
                 },
+            }
+        }
+
+        fn sleepNs(nanoseconds: u64) void {
+            if (nanoseconds == 0) return;
+            const ns_per_s: u64 = if (@hasDecl(std.time, "ns_per_s")) std.time.ns_per_s else 1_000_000_000;
+            const ns_per_ms: u64 = if (@hasDecl(std.time, "ns_per_ms")) std.time.ns_per_ms else 1_000_000;
+
+            // Zig 0.15 API path.
+            if (@hasDecl(std.Thread, "sleep")) {
+                std.Thread.sleep(nanoseconds);
+                return;
+            }
+
+            // Zig 0.16+ API path.
+            if (@hasDecl(std, "Io")) {
+                const Io = std.Io;
+                if (@hasDecl(Io, "Threaded") and
+                    @hasDecl(Io, "Clock") and
+                    @hasDecl(Io.Clock, "Duration") and
+                    @hasDecl(Io.Clock.Duration, "fromNanoseconds") and
+                    @hasDecl(Io.Clock.Duration, "sleep"))
+                {
+                    var threaded_io: Io.Threaded = .init_single_threaded;
+                    const io = threaded_io.io();
+                    const duration = Io.Clock.Duration.fromNanoseconds(@intCast(nanoseconds));
+                    duration.sleep(io) catch {};
+                    return;
+                }
+            }
+
+            // Fallback for targets/environments where the above are unavailable.
+            if (@hasDecl(std, "os") and @hasDecl(std.os, "windows") and builtin.os.tag == .windows) {
+                const windows = std.os.windows;
+                const big_ms_from_ns = nanoseconds / ns_per_ms;
+                const ms = std.math.cast(windows.DWORD, big_ms_from_ns) orelse std.math.maxInt(windows.DWORD);
+                windows.kernel32.Sleep(ms);
+                return;
+            }
+
+            if (@hasDecl(std, "posix") and @hasDecl(std.posix, "nanosleep")) {
+                const seconds = nanoseconds / ns_per_s;
+                const rem_ns = nanoseconds % ns_per_s;
+                std.posix.nanosleep(seconds, rem_ns);
+                return;
+            }
+
+            // Last resort: spin for the requested duration.
+            var timer = std.time.Timer.start() catch return;
+            const start_ns = timer.read();
+            while (timer.read() - start_ns < nanoseconds) {
+                std.atomic.spinLoopHint();
             }
         }
 

@@ -234,7 +234,7 @@ pub fn disableMouse(state: *State, writer: anytype) !void {
     state.mouse_enabled = false;
 }
 
-/// Read available input (Windows uses std.io)
+/// Read available input (Windows uses std.Io)
 pub fn readInput(state: *State, buffer: []u8, timeout_ms: i32) !usize {
     if (state.stdin_handle == windows.INVALID_HANDLE_VALUE) return 0;
 
