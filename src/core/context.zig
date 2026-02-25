@@ -132,6 +132,23 @@ pub const Context = struct {
         if (y >= self.height) return self.height -| 1;
         return @intCast(y);
     }
+
+    /// Returns whether Kitty graphics protocol is available.
+    pub fn supportsKittyGraphics(self: *const Context) bool {
+        if (self._terminal) |term| {
+            return term.supportsKittyGraphics();
+        }
+        return false;
+    }
+
+    /// Draw a PNG image file via Kitty graphics protocol (`t=f`).
+    /// Returns false when unsupported or path is empty.
+    pub fn drawKittyImageFromFile(self: *Context, path: []const u8, options: Terminal.KittyImageFileOptions) !bool {
+        if (self._terminal) |term| {
+            return term.drawKittyImageFromFile(path, options);
+        }
+        return false;
+    }
 };
 
 /// Options that can be modified during runtime

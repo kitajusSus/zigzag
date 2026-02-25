@@ -496,6 +496,19 @@ pub fn Program(comptime Model: type) type {
                         try term.flush();
                     }
                 },
+                .kitty_image_file => |image| {
+                    if (self.terminal) |*term| {
+                        _ = try term.drawKittyImageFromFile(image.path, .{
+                            .width_cells = image.width_cells,
+                            .height_cells = image.height_cells,
+                            .image_id = image.image_id,
+                            .placement_id = image.placement_id,
+                            .move_cursor = image.move_cursor,
+                            .quiet = image.quiet,
+                        });
+                        try term.flush();
+                    }
+                },
             }
         }
 

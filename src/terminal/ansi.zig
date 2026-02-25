@@ -8,6 +8,8 @@ pub const ESC = "\x1b";
 pub const CSI = ESC ++ "[";
 pub const OSC = ESC ++ "]";
 pub const DCS = ESC ++ "P";
+pub const APC = ESC ++ "_";
+pub const ST = ESC ++ "\\";
 
 // Cursor control
 pub const cursor_hide = CSI ++ "?25l";
@@ -230,4 +232,13 @@ pub fn bgRgb(writer: anytype, r: u8, g: u8, b: u8) !void {
 /// Hyperlink (OSC 8)
 pub fn hyperlink(writer: anytype, url: []const u8, text: []const u8) !void {
     try writer.print(OSC ++ "8;;{s}\x07{s}" ++ OSC ++ "8;;\x07", .{ url, text });
+}
+
+/// Kitty graphics protocol command (APC G ... ST)
+pub fn kittyGraphics(writer: anytype, params: []const u8, payload: []const u8) !void {
+    try writer.writeAll(APC ++ "G");
+    try writer.writeAll(params);
+    try writer.writeAll(";");
+    try writer.writeAll(payload);
+    try writer.writeAll(ST);
 }

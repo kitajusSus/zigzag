@@ -3,6 +3,17 @@
 
 const std = @import("std");
 
+/// Parameters for Kitty image rendering by file path.
+pub const KittyImageFile = struct {
+    path: []const u8,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    image_id: ?u32 = null,
+    placement_id: ?u32 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+};
+
 /// Command type parameterized by the user's message type
 pub fn Cmd(comptime Msg: type) type {
     return union(enum) {
@@ -44,6 +55,9 @@ pub fn Cmd(comptime Msg: type) type {
 
         /// Print a line above the program output
         println: []const u8,
+
+        /// Draw an image file via Kitty graphics protocol (no-op if unsupported)
+        kitty_image_file: KittyImageFile,
 
         const Self = @This();
 
@@ -121,6 +135,7 @@ pub const StandardCmd = union(enum) {
     hide_cursor,
     enter_alt_screen,
     exit_alt_screen,
+    kitty_image_file: KittyImageFile,
 };
 
 /// Combine multiple commands into a batch

@@ -22,6 +22,35 @@ pub const UnicodeWidthCapabilities = struct {
     strategy: unicode.WidthStrategy = .legacy_wcwidth,
 };
 
+pub const ImageCapabilities = struct {
+    kitty_graphics: bool = false,
+};
+
+pub const KittyImageFormat = enum(u16) {
+    rgb = 24,
+    rgba = 32,
+    png = 100,
+};
+
+pub const KittyImageOptions = struct {
+    format: KittyImageFormat = .png,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    image_id: ?u32 = null,
+    placement_id: ?u32 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+};
+
+pub const KittyImageFileOptions = struct {
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    image_id: ?u32 = null,
+    placement_id: ?u32 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+};
+
 /// Terminal configuration options
 pub const Config = struct {
     /// Use alternate screen buffer
@@ -49,6 +78,7 @@ pub const Terminal = struct {
     write_buffer: [4096]u8 = undefined,
     write_pos: usize = 0,
     unicode_width_caps: UnicodeWidthCapabilities = .{},
+    image_caps: ImageCapabilities = .{},
 
     pub fn init(config: Config) !Terminal {
         const stdout = config.output orelse std.fs.File.stdout();
@@ -114,6 +144,7 @@ pub const Terminal = struct {
         }
 
         self.detectUnicodeWidthCapabilities();
+        self.detectImageCapabilities();
 
         // Clear screen
         try self.writeBytes(ansi.screen_clear);
@@ -273,6 +304,56 @@ pub const Terminal = struct {
         return self.unicode_width_caps;
     }
 
+    pub fn getImageCapabilities(self: *const Terminal) ImageCapabilities {
+        return self.image_caps;
+    }
+
+    pub fn supportsKittyGraphics(self: *const Terminal) bool {
+        return self.image_caps.kitty_graphics;
+    }
+
+    /// Draw image bytes using Kitty graphics protocol (`t=d`).
+    /// Returns `false` when unsupported or no data is provided.
+    pub fn drawKittyImage(self: *Terminal, image_data: []const u8, options: KittyImageOptions) !bool {
+        if (!self.image_caps.kitty_graphics or image_data.len == 0) return false;
+
+        var params_buf: [160]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.print("a=T,t=d,f={d}", .{@intFromEnum(options.format)});
+        if (options.quiet) try params_writer.writeAll(",q=2");
+        if (options.width_cells) |cols| try params_writer.print(",c={d}", .{cols});
+        if (options.height_cells) |rows| try params_writer.print(",r={d}", .{rows});
+        if (options.image_id) |id| try params_writer.print(",i={d}", .{id});
+        if (options.placement_id) |id| try params_writer.print(",p={d}", .{id});
+        if (!options.move_cursor) try params_writer.writeAll(",C=1");
+
+        try self.sendKittyGraphicsPayload(stream.getWritten(), image_data);
+        return true;
+    }
+
+    /// Draw a PNG image by file path using Kitty graphics protocol (`t=f`).
+    /// Returns `false` when unsupported or path is empty.
+    pub fn drawKittyImageFromFile(self: *Terminal, path: []const u8, options: KittyImageFileOptions) !bool {
+        if (!self.image_caps.kitty_graphics or path.len == 0) return false;
+
+        var params_buf: [160]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.writeAll("a=T,t=f,f=100");
+        if (options.quiet) try params_writer.writeAll(",q=2");
+        if (options.width_cells) |cols| try params_writer.print(",c={d}", .{cols});
+        if (options.height_cells) |rows| try params_writer.print(",r={d}", .{rows});
+        if (options.image_id) |id| try params_writer.print(",i={d}", .{id});
+        if (options.placement_id) |id| try params_writer.print(",p={d}", .{id});
+        if (!options.move_cursor) try params_writer.writeAll(",C=1");
+
+        try self.sendKittyGraphicsPayload(stream.getWritten(), path);
+        return true;
+    }
+
     fn detectUnicodeWidthCapabilities(self: *Terminal) void {
         self.unicode_width_caps = .{
             .kitty_text_sizing = self.queryKittyTextSizingSupport() catch false,
@@ -290,6 +371,48 @@ pub const Terminal = struct {
         }
 
         self.unicode_width_caps.strategy = self.selectWidthStrategy();
+    }
+
+    fn detectImageCapabilities(self: *Terminal) void {
+        self.image_caps = .{
+            .kitty_graphics = self.isTty() and looksLikeKittyTerminal(),
+        };
+    }
+
+    fn sendKittyGraphicsPayload(self: *Terminal, first_params: []const u8, payload: []const u8) !void {
+        const encoder = std.base64.standard.Encoder;
+        var b64_buf: [4096]u8 = undefined;
+        const raw_chunk_max: usize = (b64_buf.len / 4) * 3;
+
+        var src_index: usize = 0;
+        var first = true;
+
+        while (true) {
+            const remaining = payload.len - src_index;
+            const take = @min(remaining, raw_chunk_max);
+            const chunk = payload[src_index .. src_index + take];
+
+            const encoded_len = encoder.calcSize(chunk.len);
+            const encoded = encoder.encode(b64_buf[0..encoded_len], chunk);
+            const has_more = src_index + take < payload.len;
+
+            if (first) {
+                var first_chunk_params: [192]u8 = undefined;
+                const params = try std.fmt.bufPrint(
+                    &first_chunk_params,
+                    "{s},m={d}",
+                    .{ first_params, if (has_more) @as(u8, 1) else @as(u8, 0) },
+                );
+                try ansi.kittyGraphics(self.writer(), params, encoded);
+                first = false;
+            } else {
+                const params = if (has_more) "m=1" else "m=0";
+                try ansi.kittyGraphics(self.writer(), params, encoded);
+            }
+
+            if (!has_more) break;
+            src_index += take;
+        }
     }
 
     fn queryMode2027Support(self: *Terminal) !bool {

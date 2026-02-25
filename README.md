@@ -11,7 +11,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 - **16 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Help, Paginator, Timer, FilePicker
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
-- **Command System** - Quit, tick, repeating tick (`every`), batch, sequence, suspend/resume, runtime terminal control (mouse, cursor, alt screen, title), print above program
+- **Command System** - Quit, tick, repeating tick (`every`), batch, sequence, suspend/resume, runtime terminal control (mouse, cursor, alt screen, title), print above program, Kitty image file rendering
 - **Custom I/O** - Pipe-friendly with configurable input/output streams for testing and automation
 - **Kitty Keyboard Protocol** - Modern keyboard handling with key release events and unambiguous key identification
 - **Bracketed Paste** - Paste events delivered as a single message instead of individual keystrokes
@@ -123,6 +123,11 @@ return .show_cursor;                   // Show terminal cursor
 return .hide_cursor;                   // Hide terminal cursor
 return .{ .set_title = "My App" };     // Set terminal window title
 return .{ .println = "Log message" };  // Print above the program output
+return .{ .kitty_image_file = .{       // Draw PNG file via Kitty graphics protocol
+    .path = "/tmp/cat.png",
+    .width_cells = 40,
+    .height_cells = 20,
+} };
 ```
 
 ### Styling
@@ -513,6 +518,19 @@ pub const Msg = union(enum) {
     key: zz.KeyEvent,
     resumed: void,  // Sent after process resumes from Ctrl+Z
 };
+```
+
+### Images (Kitty Graphics)
+
+Kitty image commands are automatically no-ops on unsupported terminals.
+
+```zig
+if (ctx.supportsKittyGraphics()) {
+    _ = try ctx.drawKittyImageFromFile("/tmp/cat.png", .{
+        .width_cells = 40,
+        .height_cells = 20,
+    });
+}
 ```
 
 ## Layout
