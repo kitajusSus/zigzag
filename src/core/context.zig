@@ -174,6 +174,48 @@ pub const Context = struct {
         return false;
     }
 
+    /// Draw in-memory image data via Kitty graphics protocol (`t=d`).
+    /// Returns false when unsupported or data is empty.
+    pub fn drawKittyImage(self: *Context, data: []const u8, options: Terminal.KittyImageOptions) !bool {
+        if (self._terminal) |term| {
+            return term.drawKittyImage(data, options);
+        }
+        return false;
+    }
+
+    /// Transmit an image to the Kitty cache without displaying.
+    /// Use `placeCachedImage` later to display by ID.
+    pub fn transmitKittyImage(self: *Context, payload: []const u8, options: Terminal.KittyTransmitOptions) !bool {
+        if (self._terminal) |term| {
+            return term.transmitKittyImage(payload, options);
+        }
+        return false;
+    }
+
+    /// Transmit a file to the Kitty cache without displaying.
+    pub fn transmitKittyImageFromFile(self: *Context, path: []const u8, options: Terminal.KittyTransmitOptions) !bool {
+        if (self._terminal) |term| {
+            return term.transmitKittyImageFromFile(path, options);
+        }
+        return false;
+    }
+
+    /// Display a previously cached Kitty image by ID.
+    pub fn placeKittyImage(self: *Context, options: Terminal.KittyPlaceOptions) !bool {
+        if (self._terminal) |term| {
+            return term.placeKittyImage(options);
+        }
+        return false;
+    }
+
+    /// Delete cached Kitty images/placements.
+    pub fn deleteKittyImage(self: *Context, target: Terminal.KittyDeleteTarget) !bool {
+        if (self._terminal) |term| {
+            return term.deleteKittyImage(target);
+        }
+        return false;
+    }
+
     /// Draw a Sixel image from file (or convert via `img2sixel` when available).
     /// Returns false when unsupported or path is empty.
     pub fn drawSixelFromFile(self: *Context, path: []const u8, options: Terminal.SixelImageFileOptions) !bool {
@@ -190,6 +232,46 @@ pub const Context = struct {
             return term.drawImageFromFile(path, options);
         }
         return false;
+    }
+
+    /// Draw an image file using a specific protocol.
+    pub fn drawImageFromFileWithProtocol(self: *Context, path: []const u8, options: Terminal.ImageFileOptions, protocol: Terminal.ImageProtocol) !bool {
+        if (self._terminal) |term| {
+            return term.drawImageFromFileWithProtocol(path, options, protocol);
+        }
+        return false;
+    }
+
+    /// Draw in-memory image data using the best available protocol.
+    pub fn drawImageData(self: *Context, data: []const u8, options: Terminal.ImageDataOptions) !bool {
+        if (self._terminal) |term| {
+            return term.drawImageData(data, options);
+        }
+        return false;
+    }
+
+    /// Draw in-memory image data using a specific protocol.
+    pub fn drawImageDataWithProtocol(self: *Context, data: []const u8, options: Terminal.ImageDataOptions, protocol: Terminal.ImageProtocol) !bool {
+        if (self._terminal) |term| {
+            return term.drawImageDataWithProtocol(data, options, protocol);
+        }
+        return false;
+    }
+
+    /// Draw in-memory image data via iTerm2 inline image protocol.
+    pub fn drawIterm2ImageData(self: *Context, data: []const u8, options: Terminal.Iterm2ImageDataOptions) !bool {
+        if (self._terminal) |term| {
+            return term.drawIterm2ImageData(data, options);
+        }
+        return false;
+    }
+
+    /// Get the current image capabilities of the terminal.
+    pub fn getImageCapabilities(self: *const Context) Terminal.ImageCapabilities {
+        if (self._terminal) |term| {
+            return term.getImageCapabilities();
+        }
+        return .{};
     }
 };
 

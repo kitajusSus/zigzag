@@ -19,6 +19,8 @@ pub const Msg = message;
 const PendingImage = union(enum) {
     auto: command.ImageFile,
     kitty: command.KittyImageFile,
+    data: command.ImageData,
+    place_cached: command.PlaceCachedImage,
 };
 
 /// Program runtime that manages the application lifecycle
@@ -510,10 +512,53 @@ pub fn Program(comptime Model: type) type {
                 .kitty_image_file => |image| {
                     self.pending_image = .{ .kitty = image };
                 },
+                .image_data => |image| {
+                    self.pending_image = .{ .data = image };
+                },
+                .cache_image => |cache| {
+                    if (self.terminal) |*term| {
+                        switch (cache.source) {
+                            .file => |path| {
+                                _ = term.transmitKittyImageFromFile(path, .{
+                                    .image_id = cache.image_id,
+                                    .format = @enumFromInt(@intFromEnum(cache.format)),
+                                    .quiet = cache.quiet,
+                                    .pixel_width = cache.pixel_width,
+                                    .pixel_height = cache.pixel_height,
+                                }) catch {};
+                            },
+                            .data => |data| {
+                                _ = term.transmitKittyImage(data, .{
+                                    .image_id = cache.image_id,
+                                    .format = @enumFromInt(@intFromEnum(cache.format)),
+                                    .quiet = cache.quiet,
+                                    .pixel_width = cache.pixel_width,
+                                    .pixel_height = cache.pixel_height,
+                                }) catch {};
+                            },
+                        }
+                        term.flush() catch {};
+                    }
+                },
+                .place_cached_image => |place| {
+                    self.pending_image = .{ .place_cached = place };
+                },
+                .delete_image => |del| {
+                    if (self.terminal) |*term| {
+                        const target: @import("../terminal/terminal.zig").KittyDeleteTarget = switch (del) {
+                            .by_id => |id| .{ .by_id = id },
+                            .by_placement => |bp| .{ .by_placement = .{ .image_id = bp.image_id, .placement_id = bp.placement_id } },
+                            .all => .all,
+                        };
+                        _ = term.deleteKittyImage(target) catch {};
+                        term.flush() catch {};
+                    }
+                },
             }
         }
 
         fn flushPendingImage(self: *Self) !void {
+            const TerminalMod = @import("../terminal/terminal.zig");
             const pending = self.pending_image orelse return;
             self.pending_image = null;
             if (self.terminal) |*term| {
@@ -523,7 +568,13 @@ pub fn Program(comptime Model: type) type {
                             try term.writer().writeAll(ansi.cursor_save);
                         }
                         try self.positionPendingImage(term, image);
-                        _ = try term.drawImageFromFile(image.path, .{
+                        const protocol: TerminalMod.ImageProtocol = switch (image.protocol) {
+                            .auto => .auto,
+                            .kitty => .kitty,
+                            .iterm2 => .iterm2,
+                            .sixel => .sixel,
+                        };
+                        _ = try term.drawImageFromFileWithProtocol(image.path, .{
                             .width_cells = image.width_cells,
                             .height_cells = image.height_cells,
                             .preserve_aspect_ratio = image.preserve_aspect_ratio,
@@ -531,7 +582,9 @@ pub fn Program(comptime Model: type) type {
                             .placement_id = image.placement_id,
                             .move_cursor = image.move_cursor,
                             .quiet = image.quiet,
-                        });
+                            .z_index = image.z_index,
+                            .unicode_placeholder = image.unicode_placeholder,
+                        }, protocol);
                         if (!image.move_cursor) {
                             try term.writer().writeAll(ansi.cursor_restore);
                         }
@@ -548,8 +601,57 @@ pub fn Program(comptime Model: type) type {
                             .placement_id = image.placement_id,
                             .move_cursor = image.move_cursor,
                             .quiet = image.quiet,
+                            .z_index = image.z_index,
+                            .unicode_placeholder = image.unicode_placeholder,
                         });
                         if (!image.move_cursor) {
+                            try term.writer().writeAll(ansi.cursor_restore);
+                        }
+                    },
+                    .data => |image| {
+                        if (!image.move_cursor) {
+                            try term.writer().writeAll(ansi.cursor_save);
+                        }
+                        try self.positionPendingImageData(term, image);
+                        const protocol: TerminalMod.ImageProtocol = switch (image.protocol) {
+                            .auto => .auto,
+                            .kitty => .kitty,
+                            .iterm2 => .iterm2,
+                            .sixel => .sixel,
+                        };
+                        _ = try term.drawImageDataWithProtocol(image.data, .{
+                            .format = @enumFromInt(@intFromEnum(image.format)),
+                            .pixel_width = image.pixel_width,
+                            .pixel_height = image.pixel_height,
+                            .width_cells = image.width_cells,
+                            .height_cells = image.height_cells,
+                            .image_id = image.image_id,
+                            .placement_id = image.placement_id,
+                            .move_cursor = image.move_cursor,
+                            .quiet = image.quiet,
+                            .z_index = image.z_index,
+                            .unicode_placeholder = image.unicode_placeholder,
+                        }, protocol);
+                        if (!image.move_cursor) {
+                            try term.writer().writeAll(ansi.cursor_restore);
+                        }
+                    },
+                    .place_cached => |place| {
+                        if (!place.move_cursor) {
+                            try term.writer().writeAll(ansi.cursor_save);
+                        }
+                        try self.positionPendingCachedImage(term, place);
+                        _ = try term.placeKittyImage(.{
+                            .image_id = place.image_id,
+                            .placement_id = place.placement_id,
+                            .width_cells = place.width_cells,
+                            .height_cells = place.height_cells,
+                            .move_cursor = place.move_cursor,
+                            .quiet = place.quiet,
+                            .z_index = place.z_index,
+                            .unicode_placeholder = place.unicode_placeholder,
+                        });
+                        if (!place.move_cursor) {
                             try term.writer().writeAll(ansi.cursor_restore);
                         }
                     },
@@ -559,17 +661,39 @@ pub fn Program(comptime Model: type) type {
         }
 
         fn positionPendingImage(self: *Self, term: *Terminal, image: command.ImageFile) !void {
+            try self.positionByPlacement(term, image.placement, image.width_cells, image.height_cells, image.row, image.col, image.row_offset, image.col_offset);
+        }
+
+        fn positionPendingImageData(self: *Self, term: *Terminal, image: command.ImageData) !void {
+            try self.positionByPlacement(term, image.placement, image.width_cells, image.height_cells, image.row, image.col, image.row_offset, image.col_offset);
+        }
+
+        fn positionPendingCachedImage(self: *Self, term: *Terminal, place: command.PlaceCachedImage) !void {
+            try self.positionByPlacement(term, place.placement, place.width_cells, place.height_cells, place.row, place.col, place.row_offset, place.col_offset);
+        }
+
+        fn positionByPlacement(
+            self: *Self,
+            term: *Terminal,
+            placement: command.ImagePlacement,
+            width_cells: ?u16,
+            height_cells: ?u16,
+            opt_row: ?u16,
+            opt_col: ?u16,
+            row_offset: i16,
+            col_offset: i16,
+        ) !void {
             var row: u16 = 0;
             var col: u16 = 0;
 
-            switch (image.placement) {
+            switch (placement) {
                 .cursor => return,
                 .top_left => {
                     row = 0;
                     col = 0;
                 },
                 .top_center => {
-                    if (image.width_cells) |w_cells| {
+                    if (width_cells) |w_cells| {
                         const term_width = @as(usize, self.context.width);
                         const image_width = @as(usize, w_cells);
                         if (term_width > image_width) {
@@ -579,15 +703,14 @@ pub fn Program(comptime Model: type) type {
                     row = 0;
                 },
                 .center => {
-                    if (image.width_cells) |w_cells| {
+                    if (width_cells) |w_cells| {
                         const term_width = @as(usize, self.context.width);
                         const image_width = @as(usize, w_cells);
                         if (term_width > image_width) {
                             col = @intCast((term_width - image_width) / 2);
                         }
                     }
-
-                    if (image.height_cells) |h_cells| {
+                    if (height_cells) |h_cells| {
                         const term_height = @as(usize, self.context.height);
                         const image_height = @as(usize, h_cells);
                         if (term_height > image_height) {
@@ -597,13 +720,13 @@ pub fn Program(comptime Model: type) type {
                 },
             }
 
-            if (image.row) |r| row = r;
-            if (image.col) |c| col = c;
+            if (opt_row) |r| row = r;
+            if (opt_col) |c| col = c;
 
-            const max_row = if (image.height_cells) |h| self.context.height -| h else self.context.height -| 1;
-            const max_col = if (image.width_cells) |w| self.context.width -| w else self.context.width -| 1;
-            row = applySignedOffsetClamped(row, image.row_offset, max_row);
-            col = applySignedOffsetClamped(col, image.col_offset, max_col);
+            const max_row = if (height_cells) |h| self.context.height -| h else self.context.height -| 1;
+            const max_col = if (width_cells) |w| self.context.width -| w else self.context.width -| 1;
+            row = applySignedOffsetClamped(row, row_offset, max_row);
+            col = applySignedOffsetClamped(col, col_offset, max_col);
 
             try term.moveTo(row, col);
         }

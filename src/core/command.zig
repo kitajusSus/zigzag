@@ -15,6 +15,25 @@ pub const ImagePlacement = enum {
     center,
 };
 
+/// Preferred image protocol for rendering.
+pub const ImageProtocol = enum {
+    /// Auto-select best available (Kitty > iTerm2 > Sixel).
+    auto,
+    /// Force Kitty graphics protocol.
+    kitty,
+    /// Force iTerm2 inline image protocol.
+    iterm2,
+    /// Force Sixel graphics protocol.
+    sixel,
+};
+
+/// Pixel format for in-memory image data.
+pub const ImageFormat = enum(u16) {
+    rgb = 24,
+    rgba = 32,
+    png = 100,
+};
+
 /// Parameters for image rendering by file path.
 pub const ImageFile = struct {
     path: []const u8,
@@ -34,6 +53,87 @@ pub const ImageFile = struct {
     placement_id: ?u32 = null,
     move_cursor: bool = true,
     quiet: bool = true,
+    /// Preferred protocol (default: auto-select).
+    protocol: ImageProtocol = .auto,
+    /// Z-index for layering (Kitty only). Negative = behind text.
+    z_index: ?i32 = null,
+    /// Enable unicode placeholders (Kitty only). Images participate in text reflow.
+    unicode_placeholder: bool = false,
+};
+
+/// Parameters for rendering in-memory image data.
+pub const ImageData = struct {
+    /// Raw pixel data (RGB, RGBA, or PNG bytes).
+    data: []const u8,
+    /// Pixel format of the data.
+    format: ImageFormat = .png,
+    /// Pixel width of the image (required for RGB/RGBA).
+    pixel_width: ?u32 = null,
+    /// Pixel height of the image (required for RGB/RGBA).
+    pixel_height: ?u32 = null,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    placement: ImagePlacement = .top_left,
+    row: ?u16 = null,
+    col: ?u16 = null,
+    row_offset: i16 = 0,
+    col_offset: i16 = 0,
+    image_id: ?u32 = null,
+    placement_id: ?u32 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+    protocol: ImageProtocol = .auto,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// Transmit an image to the terminal without displaying it (Kitty cache).
+pub const CacheImage = struct {
+    /// File path or in-memory data source.
+    source: ImageSource,
+    /// Unique image ID for later reference. Required.
+    image_id: u32,
+    /// Pixel format (only for in-memory data).
+    format: ImageFormat = .png,
+    /// Pixel width (required for RGB/RGBA in-memory data).
+    pixel_width: ?u32 = null,
+    /// Pixel height (required for RGB/RGBA in-memory data).
+    pixel_height: ?u32 = null,
+    quiet: bool = true,
+};
+
+/// Source for an image: file path or in-memory bytes.
+pub const ImageSource = union(enum) {
+    file: []const u8,
+    data: []const u8,
+};
+
+/// Display a previously cached image by ID (Kitty virtual placement).
+pub const PlaceCachedImage = struct {
+    /// Image ID from a previous cache_image command.
+    image_id: u32,
+    placement_id: ?u32 = null,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    placement: ImagePlacement = .top_left,
+    row: ?u16 = null,
+    col: ?u16 = null,
+    row_offset: i16 = 0,
+    col_offset: i16 = 0,
+    move_cursor: bool = true,
+    quiet: bool = true,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// Delete a cached image or placement (Kitty).
+pub const DeleteImage = union(enum) {
+    /// Delete all placements of a specific image ID.
+    by_id: u32,
+    /// Delete a specific placement of an image.
+    by_placement: struct { image_id: u32, placement_id: u32 },
+    /// Delete all images and placements.
+    all,
 };
 
 /// Backward-compatible alias for existing Kitty-only APIs.
@@ -86,6 +186,18 @@ pub fn Cmd(comptime Msg: type) type {
 
         /// Draw an image file via Kitty graphics protocol (no-op if unsupported)
         kitty_image_file: KittyImageFile,
+
+        /// Draw in-memory image data (RGB, RGBA, or PNG bytes)
+        image_data: ImageData,
+
+        /// Transmit an image to the terminal cache without displaying (Kitty)
+        cache_image: CacheImage,
+
+        /// Display a previously cached image (Kitty virtual placement)
+        place_cached_image: PlaceCachedImage,
+
+        /// Delete a cached image or placement (Kitty)
+        delete_image: DeleteImage,
 
         const Self = @This();
 
@@ -165,6 +277,10 @@ pub const StandardCmd = union(enum) {
     exit_alt_screen,
     image_file: ImageFile,
     kitty_image_file: KittyImageFile,
+    image_data: ImageData,
+    cache_image: CacheImage,
+    place_cached_image: PlaceCachedImage,
+    delete_image: DeleteImage,
 };
 
 /// Combine multiple commands into a batch

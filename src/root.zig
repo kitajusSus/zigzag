@@ -164,6 +164,18 @@ pub fn placeFloat(allocator: std.mem.Allocator, w: usize, h: usize, hpos: f32, v
     return place.placeFloat(allocator, w, h, hpos, vpos, content);
 }
 
+// Image types
+pub const ImageFile = command.ImageFile;
+pub const ImageData = command.ImageData;
+pub const ImagePlacement = command.ImagePlacement;
+pub const ImageProtocol = command.ImageProtocol;
+pub const ImageFormat = command.ImageFormat;
+pub const ImageSource = command.ImageSource;
+pub const CacheImage = command.CacheImage;
+pub const PlaceCachedImage = command.PlaceCachedImage;
+pub const DeleteImage = command.DeleteImage;
+pub const ImageCapabilities = terminal.ImageCapabilities;
+
 // Color utilities
 pub const ColorProfile = color.ColorProfile;
 pub const AdaptiveColor = color.AdaptiveColor;

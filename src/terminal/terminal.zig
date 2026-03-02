@@ -47,6 +47,14 @@ pub const KittyImageOptions = struct {
     placement_id: ?u32 = null,
     move_cursor: bool = true,
     quiet: bool = true,
+    /// Z-index for layering. Negative = behind text, positive = above.
+    z_index: ?i32 = null,
+    /// Enable unicode placeholders for text-reflow participation.
+    unicode_placeholder: bool = false,
+    /// Pixel width of the image (required for RGB/RGBA direct data).
+    pixel_width: ?u32 = null,
+    /// Pixel height of the image (required for RGB/RGBA direct data).
+    pixel_height: ?u32 = null,
 };
 
 pub const KittyImageFileOptions = struct {
@@ -56,9 +64,47 @@ pub const KittyImageFileOptions = struct {
     placement_id: ?u32 = null,
     move_cursor: bool = true,
     quiet: bool = true,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// Options for transmitting an image to the Kitty cache without display.
+pub const KittyTransmitOptions = struct {
+    image_id: u32,
+    format: KittyImageFormat = .png,
+    quiet: bool = true,
+    pixel_width: ?u32 = null,
+    pixel_height: ?u32 = null,
+};
+
+/// Options for placing a previously cached Kitty image.
+pub const KittyPlaceOptions = struct {
+    image_id: u32,
+    placement_id: ?u32 = null,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// What to delete from the Kitty image cache.
+pub const KittyDeleteTarget = union(enum) {
+    by_id: u32,
+    by_placement: struct { image_id: u32, placement_id: u32 },
+    all,
 };
 
 pub const Iterm2ImageFileOptions = struct {
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    preserve_aspect_ratio: bool = true,
+    move_cursor: bool = true,
+};
+
+/// Options for in-memory iTerm2 image rendering.
+pub const Iterm2ImageDataOptions = struct {
     width_cells: ?u16 = null,
     height_cells: ?u16 = null,
     preserve_aspect_ratio: bool = true,
@@ -73,11 +119,41 @@ pub const ImageFileOptions = struct {
     placement_id: ?u32 = null,
     move_cursor: bool = true,
     quiet: bool = true,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// Options for rendering in-memory image data with auto protocol selection.
+pub const ImageDataOptions = struct {
+    format: KittyImageFormat = .png,
+    pixel_width: ?u32 = null,
+    pixel_height: ?u32 = null,
+    width_cells: ?u16 = null,
+    height_cells: ?u16 = null,
+    preserve_aspect_ratio: bool = true,
+    image_id: ?u32 = null,
+    placement_id: ?u32 = null,
+    move_cursor: bool = true,
+    quiet: bool = true,
+    z_index: ?i32 = null,
+    unicode_placeholder: bool = false,
+};
+
+/// Preferred image protocol for protocol-selection overrides.
+pub const ImageProtocol = enum {
+    auto,
+    kitty,
+    iterm2,
+    sixel,
 };
 
 pub const SixelImageFileOptions = struct {
     /// Optional max captured converter output (bytes).
     max_output_bytes: usize = 32 * 1024 * 1024,
+    /// Optional pixel width hint for img2sixel (-w flag).
+    width_pixels: ?u32 = null,
+    /// Optional pixel height hint for img2sixel (-h flag).
+    height_pixels: ?u32 = null,
 };
 
 /// Terminal configuration options
@@ -358,7 +434,7 @@ pub const Terminal = struct {
     pub fn drawKittyImage(self: *Terminal, image_data: []const u8, options: KittyImageOptions) !bool {
         if (!self.image_caps.kitty_graphics or image_data.len == 0) return false;
 
-        var params_buf: [160]u8 = undefined;
+        var params_buf: [256]u8 = undefined;
         var stream = std.io.fixedBufferStream(&params_buf);
         const params_writer = stream.writer();
 
@@ -369,6 +445,10 @@ pub const Terminal = struct {
         if (options.image_id) |id| try params_writer.print(",i={d}", .{id});
         if (options.placement_id) |id| try params_writer.print(",p={d}", .{id});
         if (!options.move_cursor) try params_writer.writeAll(",C=1");
+        if (options.z_index) |z| try params_writer.print(",z={d}", .{z});
+        if (options.unicode_placeholder) try params_writer.writeAll(",U=1");
+        if (options.pixel_width) |pw| try params_writer.print(",s={d}", .{pw});
+        if (options.pixel_height) |ph| try params_writer.print(",v={d}", .{ph});
 
         try self.sendKittyGraphicsPayload(stream.getWritten(), image_data);
         return true;
@@ -379,7 +459,7 @@ pub const Terminal = struct {
     pub fn drawKittyImageFromFile(self: *Terminal, path: []const u8, options: KittyImageFileOptions) !bool {
         if (!self.image_caps.kitty_graphics or path.len == 0) return false;
 
-        var params_buf: [160]u8 = undefined;
+        var params_buf: [256]u8 = undefined;
         var stream = std.io.fixedBufferStream(&params_buf);
         const params_writer = stream.writer();
 
@@ -390,8 +470,97 @@ pub const Terminal = struct {
         if (options.image_id) |id| try params_writer.print(",i={d}", .{id});
         if (options.placement_id) |id| try params_writer.print(",p={d}", .{id});
         if (!options.move_cursor) try params_writer.writeAll(",C=1");
+        if (options.z_index) |z| try params_writer.print(",z={d}", .{z});
+        if (options.unicode_placeholder) try params_writer.writeAll(",U=1");
 
         try self.sendKittyGraphicsPayload(stream.getWritten(), path);
+        return true;
+    }
+
+    /// Transmit an image to the Kitty cache without displaying it (`a=t`).
+    /// Use `placeKittyImage` later to display it by ID.
+    pub fn transmitKittyImage(self: *Terminal, payload: []const u8, options: KittyTransmitOptions) !bool {
+        if (!self.image_caps.kitty_graphics or payload.len == 0) return false;
+
+        var params_buf: [256]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.print("a=t,i={d}", .{options.image_id});
+        if (options.quiet) try params_writer.writeAll(",q=2");
+
+        switch (options.format) {
+            .png => try params_writer.writeAll(",f=100"),
+            .rgb => {
+                try params_writer.writeAll(",f=24");
+                if (options.pixel_width) |pw| try params_writer.print(",s={d}", .{pw});
+                if (options.pixel_height) |ph| try params_writer.print(",v={d}", .{ph});
+            },
+            .rgba => {
+                try params_writer.writeAll(",f=32");
+                if (options.pixel_width) |pw| try params_writer.print(",s={d}", .{pw});
+                if (options.pixel_height) |ph| try params_writer.print(",v={d}", .{ph});
+            },
+        }
+
+        try self.sendKittyGraphicsPayload(stream.getWritten(), payload);
+        return true;
+    }
+
+    /// Transmit an image file to the Kitty cache without displaying it (`a=t,t=f`).
+    pub fn transmitKittyImageFromFile(self: *Terminal, path: []const u8, options: KittyTransmitOptions) !bool {
+        if (!self.image_caps.kitty_graphics or path.len == 0) return false;
+        if (!fileExists(path)) return false;
+
+        var params_buf: [256]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.print("a=t,t=f,f=100,i={d}", .{options.image_id});
+        if (options.quiet) try params_writer.writeAll(",q=2");
+
+        try self.sendKittyGraphicsPayload(stream.getWritten(), path);
+        return true;
+    }
+
+    /// Display a previously cached image by ID (`a=p`).
+    pub fn placeKittyImage(self: *Terminal, options: KittyPlaceOptions) !bool {
+        if (!self.image_caps.kitty_graphics) return false;
+
+        var params_buf: [256]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.print("a=p,i={d}", .{options.image_id});
+        if (options.quiet) try params_writer.writeAll(",q=2");
+        if (options.placement_id) |id| try params_writer.print(",p={d}", .{id});
+        if (options.width_cells) |cols| try params_writer.print(",c={d}", .{cols});
+        if (options.height_cells) |rows| try params_writer.print(",r={d}", .{rows});
+        if (!options.move_cursor) try params_writer.writeAll(",C=1");
+        if (options.z_index) |z| try params_writer.print(",z={d}", .{z});
+        if (options.unicode_placeholder) try params_writer.writeAll(",U=1");
+
+        // Virtual placement has no payload.
+        try ansi.kittyGraphics(self.writer(), stream.getWritten(), "");
+        return true;
+    }
+
+    /// Delete images/placements from the Kitty cache (`a=d`).
+    pub fn deleteKittyImage(self: *Terminal, target: KittyDeleteTarget) !bool {
+        if (!self.image_caps.kitty_graphics) return false;
+
+        var params_buf: [128]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.writeAll("a=d,q=2");
+        switch (target) {
+            .by_id => |id| try params_writer.print(",d=I,i={d}", .{id}),
+            .by_placement => |bp| try params_writer.print(",d=I,i={d},p={d}", .{ bp.image_id, bp.placement_id }),
+            .all => try params_writer.writeAll(",d=A"),
+        }
+
+        try ansi.kittyGraphics(self.writer(), stream.getWritten(), "");
         return true;
     }
 
@@ -399,12 +568,13 @@ pub const Terminal = struct {
     /// Returns `false` when unsupported or path is empty.
     pub fn drawIterm2ImageFromFile(self: *Terminal, path: []const u8, options: Iterm2ImageFileOptions) !bool {
         if (!self.image_caps.iterm2_inline_image or path.len == 0) return false;
+        if (!fileExists(path)) return false;
 
         var file = try std.fs.cwd().openFile(path, .{});
         defer file.close();
         const stat = try file.stat();
 
-        var params_buf: [192]u8 = undefined;
+        var params_buf: [256]u8 = undefined;
         var stream = std.io.fixedBufferStream(&params_buf);
         const params_writer = stream.writer();
 
@@ -426,31 +596,178 @@ pub const Terminal = struct {
         return true;
     }
 
+    /// Draw in-memory image data via iTerm2 inline image protocol.
+    /// Returns `false` when unsupported or data is empty.
+    pub fn drawIterm2ImageData(self: *Terminal, data: []const u8, options: Iterm2ImageDataOptions) !bool {
+        if (!self.image_caps.iterm2_inline_image or data.len == 0) return false;
+
+        var params_buf: [256]u8 = undefined;
+        var stream = std.io.fixedBufferStream(&params_buf);
+        const params_writer = stream.writer();
+
+        try params_writer.writeAll("inline=1");
+        if (options.width_cells) |cols| try params_writer.print(";width={d}", .{cols});
+        if (options.height_cells) |rows| try params_writer.print(";height={d}", .{rows});
+        try params_writer.print(";preserveAspectRatio={d}", .{if (options.preserve_aspect_ratio) @as(u8, 1) else @as(u8, 0)});
+        if (!options.move_cursor) try params_writer.writeAll(";doNotMoveCursor=1");
+        try params_writer.print(";size={d}", .{data.len});
+
+        try self.sendIterm2InlineImageDataPayload(stream.getWritten(), data);
+        return true;
+    }
+
     /// Draw an image file using the best available protocol.
-    /// Prefers Kitty graphics, then iTerm2 inline images.
+    /// Prefers Kitty graphics, then iTerm2 inline images, then Sixel.
+    /// Use `protocol` to override the auto-selection.
     pub fn drawImageFromFile(self: *Terminal, path: []const u8, options: ImageFileOptions) !bool {
-        if (self.image_caps.kitty_graphics) {
-            return self.drawKittyImageFromFile(path, .{
-                .width_cells = options.width_cells,
-                .height_cells = options.height_cells,
-                .image_id = options.image_id,
-                .placement_id = options.placement_id,
-                .move_cursor = options.move_cursor,
-                .quiet = options.quiet,
-            });
+        return self.drawImageFromFileWithProtocol(path, options, .auto);
+    }
+
+    /// Draw an image file using a specific or auto-selected protocol.
+    pub fn drawImageFromFileWithProtocol(self: *Terminal, path: []const u8, options: ImageFileOptions, protocol: ImageProtocol) !bool {
+        if (path.len == 0) return false;
+        if (!fileExists(path)) return false;
+
+        switch (protocol) {
+            .kitty => {
+                if (self.image_caps.kitty_graphics) {
+                    return self.drawKittyImageFromFile(path, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .image_id = options.image_id,
+                        .placement_id = options.placement_id,
+                        .move_cursor = options.move_cursor,
+                        .quiet = options.quiet,
+                        .z_index = options.z_index,
+                        .unicode_placeholder = options.unicode_placeholder,
+                    });
+                }
+                return false;
+            },
+            .iterm2 => {
+                if (self.image_caps.iterm2_inline_image) {
+                    return self.drawIterm2ImageFromFile(path, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .preserve_aspect_ratio = options.preserve_aspect_ratio,
+                        .move_cursor = options.move_cursor,
+                    });
+                }
+                return false;
+            },
+            .sixel => {
+                if (self.image_caps.sixel) {
+                    return self.drawSixelFromFile(path, .{});
+                }
+                return false;
+            },
+            .auto => {
+                if (self.image_caps.kitty_graphics) {
+                    return self.drawKittyImageFromFile(path, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .image_id = options.image_id,
+                        .placement_id = options.placement_id,
+                        .move_cursor = options.move_cursor,
+                        .quiet = options.quiet,
+                        .z_index = options.z_index,
+                        .unicode_placeholder = options.unicode_placeholder,
+                    });
+                }
+                if (self.image_caps.iterm2_inline_image) {
+                    return self.drawIterm2ImageFromFile(path, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .preserve_aspect_ratio = options.preserve_aspect_ratio,
+                        .move_cursor = options.move_cursor,
+                    });
+                }
+                if (self.image_caps.sixel) {
+                    return self.drawSixelFromFile(path, .{});
+                }
+                return false;
+            },
         }
-        if (self.image_caps.iterm2_inline_image) {
-            return self.drawIterm2ImageFromFile(path, .{
-                .width_cells = options.width_cells,
-                .height_cells = options.height_cells,
-                .preserve_aspect_ratio = options.preserve_aspect_ratio,
-                .move_cursor = options.move_cursor,
-            });
+    }
+
+    /// Draw in-memory image data using the best available protocol.
+    pub fn drawImageData(self: *Terminal, data: []const u8, options: ImageDataOptions) !bool {
+        return self.drawImageDataWithProtocol(data, options, .auto);
+    }
+
+    /// Draw in-memory image data using a specific or auto-selected protocol.
+    pub fn drawImageDataWithProtocol(self: *Terminal, data: []const u8, options: ImageDataOptions, protocol: ImageProtocol) !bool {
+        if (data.len == 0) return false;
+
+        switch (protocol) {
+            .kitty => {
+                if (self.image_caps.kitty_graphics) {
+                    return self.drawKittyImage(data, .{
+                        .format = options.format,
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .image_id = options.image_id,
+                        .placement_id = options.placement_id,
+                        .move_cursor = options.move_cursor,
+                        .quiet = options.quiet,
+                        .z_index = options.z_index,
+                        .unicode_placeholder = options.unicode_placeholder,
+                        .pixel_width = options.pixel_width,
+                        .pixel_height = options.pixel_height,
+                    });
+                }
+                return false;
+            },
+            .iterm2 => {
+                if (self.image_caps.iterm2_inline_image) {
+                    return self.drawIterm2ImageData(data, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .preserve_aspect_ratio = options.preserve_aspect_ratio,
+                        .move_cursor = options.move_cursor,
+                    });
+                }
+                return false;
+            },
+            .sixel => {
+                // Sixel only supports pre-encoded data or file paths.
+                if (self.image_caps.sixel) {
+                    self.sendSixelPayload(data) catch return false;
+                    return true;
+                }
+                return false;
+            },
+            .auto => {
+                if (self.image_caps.kitty_graphics) {
+                    return self.drawKittyImage(data, .{
+                        .format = options.format,
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .image_id = options.image_id,
+                        .placement_id = options.placement_id,
+                        .move_cursor = options.move_cursor,
+                        .quiet = options.quiet,
+                        .z_index = options.z_index,
+                        .unicode_placeholder = options.unicode_placeholder,
+                        .pixel_width = options.pixel_width,
+                        .pixel_height = options.pixel_height,
+                    });
+                }
+                if (self.image_caps.iterm2_inline_image) {
+                    return self.drawIterm2ImageData(data, .{
+                        .width_cells = options.width_cells,
+                        .height_cells = options.height_cells,
+                        .preserve_aspect_ratio = options.preserve_aspect_ratio,
+                        .move_cursor = options.move_cursor,
+                    });
+                }
+                if (self.image_caps.sixel) {
+                    self.sendSixelPayload(data) catch return false;
+                    return true;
+                }
+                return false;
+            },
         }
-        if (self.image_caps.sixel) {
-            return self.drawSixelFromFile(path, .{});
-        }
-        return false;
     }
 
     /// Draw a Sixel image from file.
@@ -459,6 +776,7 @@ pub const Terminal = struct {
     /// - regular image files converted through `img2sixel` when available.
     pub fn drawSixelFromFile(self: *Terminal, path: []const u8, options: SixelImageFileOptions) !bool {
         if (!self.image_caps.sixel or path.len == 0) return false;
+        if (!fileExists(path)) return false;
 
         if (isSixelDataPath(path)) {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -469,10 +787,30 @@ pub const Terminal = struct {
 
         if (!commandExists("img2sixel")) return false;
 
-        const argv = [_][]const u8{ "img2sixel", path };
+        var argv_buf: [6][]const u8 = undefined;
+        var argc: usize = 0;
+        argv_buf[argc] = "img2sixel";
+        argc += 1;
+        var w_buf: [16]u8 = undefined;
+        var h_buf: [16]u8 = undefined;
+        if (options.width_pixels) |wp| {
+            argv_buf[argc] = "-w";
+            argc += 1;
+            argv_buf[argc] = std.fmt.bufPrint(&w_buf, "{d}", .{wp}) catch "0";
+            argc += 1;
+        }
+        if (options.height_pixels) |hp| {
+            argv_buf[argc] = "-h";
+            argc += 1;
+            argv_buf[argc] = std.fmt.bufPrint(&h_buf, "{d}", .{hp}) catch "0";
+            argc += 1;
+        }
+        argv_buf[argc] = path;
+        argc += 1;
+
         const result = try std.process.Child.run(.{
             .allocator = std.heap.page_allocator,
-            .argv = &argv,
+            .argv = argv_buf[0..argc],
             .max_output_bytes = options.max_output_bytes,
         });
         defer std.heap.page_allocator.free(result.stdout);
@@ -624,6 +962,53 @@ pub const Terminal = struct {
             try self.writeBytes(ansi.OSC ++ "1337;FilePart=");
             try self.writeBytes(encoded);
             try self.writeBytes("\x07");
+        }
+
+        try self.writeBytes(ansi.OSC ++ "1337;FileEnd\x07");
+    }
+
+    fn sendIterm2InlineImageDataPayload(self: *Terminal, params: []const u8, data: []const u8) !void {
+        const encoder = std.base64.standard.Encoder;
+        const encoded_total = encoder.calcSize(data.len);
+        const single_sequence_soft_limit: usize = 750 * 1024;
+
+        if (encoded_total <= single_sequence_soft_limit) {
+            try self.writeBytes(ansi.OSC ++ "1337;File=");
+            try self.writeBytes(params);
+            try self.writeBytes(":");
+
+            var src_index: usize = 0;
+            var b64_buf: [4096]u8 = undefined;
+            const raw_chunk_max: usize = (b64_buf.len / 4) * 3;
+            while (src_index < data.len) {
+                const take = @min(data.len - src_index, raw_chunk_max);
+                const chunk = data[src_index .. src_index + take];
+                const encoded_len = encoder.calcSize(chunk.len);
+                const encoded = encoder.encode(b64_buf[0..encoded_len], chunk);
+                try self.writeBytes(encoded);
+                src_index += take;
+            }
+            try self.writeBytes("\x07");
+            return;
+        }
+
+        // Multipart transfer for large payloads.
+        try self.writeBytes(ansi.OSC ++ "1337;MultipartFile=");
+        try self.writeBytes(params);
+        try self.writeBytes("\x07");
+
+        var src_index: usize = 0;
+        var b64_buf: [4096]u8 = undefined;
+        const raw_chunk_max: usize = (b64_buf.len / 4) * 3;
+        while (src_index < data.len) {
+            const take = @min(data.len - src_index, raw_chunk_max);
+            const chunk = data[src_index .. src_index + take];
+            const encoded_len = encoder.calcSize(chunk.len);
+            const encoded = encoder.encode(b64_buf[0..encoded_len], chunk);
+            try self.writeBytes(ansi.OSC ++ "1337;FilePart=");
+            try self.writeBytes(encoded);
+            try self.writeBytes("\x07");
+            src_index += take;
         }
 
         try self.writeBytes(ansi.OSC ++ "1337;FileEnd\x07");
@@ -1058,6 +1443,11 @@ pub const Terminal = struct {
             std.mem.endsWith(u8, path, ".SIXEL") or
             std.mem.endsWith(u8, path, ".six") or
             std.mem.endsWith(u8, path, ".SIX");
+    }
+
+    fn fileExists(path: []const u8) bool {
+        std.fs.cwd().access(path, .{}) catch return false;
+        return true;
     }
 
     fn commandExists(name: []const u8) bool {
