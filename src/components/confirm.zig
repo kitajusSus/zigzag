@@ -11,6 +11,7 @@ pub const Confirm = struct {
     selected: Selection,
     confirmed: ?bool,
     active: bool,
+    focused: bool,
 
     // Styling
     prompt_style: style_mod.Style,
@@ -28,6 +29,7 @@ pub const Confirm = struct {
             .selected = .yes,
             .confirmed = null,
             .active = false,
+            .focused = true,
             .prompt_style = blk: {
                 var s = style_mod.Style{};
                 s = s.bold(true);
@@ -67,9 +69,19 @@ pub const Confirm = struct {
         return self.confirmed;
     }
 
+    /// Set focused state (for use with FocusGroup).
+    pub fn focus(self: *Confirm) void {
+        self.focused = true;
+    }
+
+    /// Clear focused state (for use with FocusGroup).
+    pub fn blur(self: *Confirm) void {
+        self.focused = false;
+    }
+
     /// Handle a key event
     pub fn handleKey(self: *Confirm, key: keys.KeyEvent) void {
-        if (!self.active) return;
+        if (!self.active or !self.focused) return;
 
         switch (key.key) {
             .left, .right, .tab => {

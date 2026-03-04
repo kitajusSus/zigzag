@@ -37,6 +37,9 @@ pub fn List(comptime T: type) type {
         selected_symbol: []const u8,
         unselected_symbol: []const u8,
 
+        // Focus
+        focused: bool,
+
         // Behavior
         multi_select: bool,
         wrap_around: bool,
@@ -110,6 +113,7 @@ pub fn List(comptime T: type) type {
                 .cursor_symbol = "> ",
                 .selected_symbol = "[x] ",
                 .unselected_symbol = "[ ] ",
+                .focused = true,
                 .multi_select = false,
                 .wrap_around = true,
                 .status_message = null,
@@ -298,8 +302,19 @@ pub fn List(comptime T: type) type {
             try self.updateFilter();
         }
 
+        /// Set focused state (for use with FocusGroup).
+        pub fn focus(self: *Self) void {
+            self.focused = true;
+        }
+
+        /// Clear focused state (for use with FocusGroup).
+        pub fn blur(self: *Self) void {
+            self.focused = false;
+        }
+
         /// Handle key event
         pub fn handleKey(self: *Self, key: keys.KeyEvent) void {
+            if (!self.focused) return;
             if (self.filter_enabled and key.key == .char and !key.modifiers.ctrl) {
                 // Add to filter
                 const c = key.key.char;

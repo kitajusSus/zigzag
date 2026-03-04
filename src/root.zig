@@ -114,6 +114,7 @@ pub const components = struct {
     pub const notification = @import("components/notification.zig");
     pub const Notification = notification.Notification;
     pub const Confirm = @import("components/confirm.zig").Confirm;
+    pub const focus = @import("components/focus.zig");
 };
 
 // Re-export commonly used components at top level
@@ -129,6 +130,12 @@ pub const StyledList = components.StyledList;
 pub const Sparkline = components.Sparkline;
 pub const Notification = components.Notification;
 pub const Confirm = components.Confirm;
+
+// Focus management
+pub const FocusGroup = components.focus.FocusGroup;
+pub const FocusStyle = components.focus.FocusStyle;
+pub const KeyBind = components.focus.KeyBind;
+pub const isFocusable = components.focus.isFocusable;
 
 // Keybinding management
 pub const keybinding = @import("components/keybinding.zig");

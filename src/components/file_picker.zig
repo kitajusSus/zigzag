@@ -37,6 +37,9 @@ pub const FilePicker = struct {
     size_style: style_mod.Style,
     path_style: style_mod.Style,
 
+    // Focus
+    focused: bool,
+
     // Symbols
     dir_icon: []const u8,
     file_icon: []const u8,
@@ -104,6 +107,7 @@ pub const FilePicker = struct {
                 s = s.inline_style(true);
                 break :blk s;
             },
+            .focused = true,
             .dir_icon = "📁 ",
             .file_icon = "📄 ",
             .link_icon = "🔗 ",
@@ -278,8 +282,19 @@ pub const FilePicker = struct {
         }
     }
 
+    /// Set focused state (for use with FocusGroup).
+    pub fn focus(self: *FilePicker) void {
+        self.focused = true;
+    }
+
+    /// Clear focused state (for use with FocusGroup).
+    pub fn blur(self: *FilePicker) void {
+        self.focused = false;
+    }
+
     /// Handle key event
     pub fn handleKey(self: *FilePicker, key: keys.KeyEvent) !bool {
+        if (!self.focused) return false;
         switch (key.key) {
             .up => self.cursorUp(),
             .down => self.cursorDown(),

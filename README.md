@@ -9,6 +9,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 - **Elm Architecture** - Model-Update-View pattern for predictable state management
 - **Rich Styling** - Comprehensive styling system with colors, borders, padding, margin backgrounds, per-side border colors, tab width control, style ranges, full style inheritance, text transforms, whitespace formatting controls, and unset methods
 - **16 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Help, Paginator, Timer, FilePicker
+- **Focus Management** - `FocusGroup` with Tab/Shift+Tab cycling, comptime focusable protocol, `FocusStyle` for visual focus ring indicators
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
 - **Command System** - Quit, tick, repeating tick (`every`), batch, sequence, suspend/resume, runtime terminal control (mouse, cursor, alt screen, title), print above program, comprehensive image rendering
@@ -453,6 +454,104 @@ defer help.deinit();
 const help_view = try help.view(allocator);
 ```
 
+### Focus Management
+
+Manage Tab/Shift+Tab cycling between interactive components with `FocusGroup`:
+
+```zig
+const Model = struct {
+    name: zz.TextInput,
+    email: zz.TextInput,
+    focus: zz.FocusGroup(2),
+    focus_style: zz.FocusStyle,
+
+    pub fn init(self: *Model, ctx: *zz.Context) zz.Cmd(Msg) {
+        self.name = zz.TextInput.init(ctx.persistent_allocator);
+        self.email = zz.TextInput.init(ctx.persistent_allocator);
+
+        self.focus = .{};
+        self.focus.add(&self.name);   // index 0
+        self.focus.add(&self.email);  // index 1
+        self.focus.initFocus();       // focus first, blur rest
+
+        self.focus_style = .{};       // cyan/gray borders by default
+        return .none;
+    }
+
+    pub fn update(self: *Model, msg: Msg, _: *zz.Context) zz.Cmd(Msg) {
+        switch (msg) {
+            .key => |k| {
+                // Tab/Shift+Tab cycles focus (returns true if consumed)
+                if (self.focus.handleKey(k)) return .none;
+                // Forward to all — unfocused components auto-ignore
+                self.name.handleKey(k);
+                self.email.handleKey(k);
+            },
+        }
+        return .none;
+    }
+
+    pub fn view(self: *const Model, ctx: *const zz.Context) []const u8 {
+        // Apply focus ring (border color changes based on focus)
+        var style = zz.Style{};
+        style = style.paddingAll(1);
+        const name_style = self.focus_style.apply(style, self.focus.isFocused(0));
+        const email_style = self.focus_style.apply(style, self.focus.isFocused(1));
+        // ... render with styled boxes ...
+    }
+};
+```
+
+Any component with `focused: bool`, `focus()`, and `blur()` methods works with `FocusGroup`.
+Built-in focusable components: TextInput, TextArea, Table, List, Confirm, FilePicker.
+
+#### Custom navigation keys
+
+By default Tab moves forward and Shift+Tab moves backward. Add or replace bindings freely:
+
+```zig
+// Add arrow keys and vim j/k alongside the default Tab
+fg.addNextKey(.{ .key = .down });              // Down arrow
+fg.addNextKey(.{ .key = .{ .char = 'j' } });  // vim j
+fg.addPrevKey(.{ .key = .up });                // Up arrow
+fg.addPrevKey(.{ .key = .{ .char = 'k' } });  // vim k
+
+// Or replace defaults entirely
+fg.setNextKey(.{ .key = .down });  // Down only, Tab no longer works
+fg.setPrevKey(.{ .key = .up });    // Up only
+
+// Clear all bindings (manual-only via focusNext/focusPrev)
+fg.clearNextKeys();
+fg.clearPrevKeys();
+
+// Modifier keys work too
+fg.addNextKey(.{ .key = .{ .char = 'n' }, .modifiers = .{ .ctrl = true } }); // Ctrl+N
+```
+
+Up to 4 bindings per direction. Modifier matching is exact (Ctrl+Tab won't match a plain Tab binding).
+
+#### Additional API
+
+```zig
+fg.focusAt(2);           // Focus specific index
+fg.focusNext();          // Manual next
+fg.focusPrev();          // Manual prev
+fg.blurAll();            // Remove focus from all
+fg.focused();            // Get current index
+fg.isFocused(1);         // Check if index is focused
+fg.len();                // Number of registered items
+
+// Disable wrapping (stop at ends instead of cycling)
+var fg: zz.FocusGroup(3) = .{ .wrap = false };
+
+// Custom focus ring colors
+const fs = zz.FocusStyle{
+    .focused_border_fg = zz.Color.green(),
+    .blurred_border_fg = zz.Color.gray(8),
+    .border_chars = zz.Border.double,
+};
+```
+
 ## Options
 
 Configure the program with custom options:
@@ -753,6 +852,7 @@ zig build run-text_editor
 zig build run-file_browser
 zig build run-dashboard
 zig build run-showcase       # Multi-tab demo of all features
+zig build run-focus_form     # Focus management with Tab cycling
 ```
 
 ## Building
