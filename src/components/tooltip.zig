@@ -72,7 +72,13 @@ pub const Tooltip = struct {
 
     border_chars: border_mod.BorderChars = border_mod.Border.rounded,
     border_fg: Color = Color.gray(14),
+    /// Background for the content area (padding + text) inside the border.
     content_bg: Color = .none,
+    /// Background for border characters. Three-state via `?Color`:
+    /// - `null` (default) — falls back to `content_bg` (same bg everywhere).
+    /// - `.none` — explicitly no bg; with `inherit_bg` the base shows through.
+    /// - any color — use that color for borders only.
+    border_bg: ?Color = null,
     text_style: style_mod.Style = makeStyle(.{ .fg_color = Color.gray(20) }),
     title_style: style_mod.Style = makeStyle(.{ .bold_v = true, .fg_color = Color.white() }),
 
@@ -80,6 +86,11 @@ pub const Tooltip = struct {
     show_arrow: bool = true,
     /// Color of the arrow character.
     arrow_fg: Color = Color.gray(14),
+    /// Background for the arrow character. Three-state via `?Color`:
+    /// - `null` (default) — no bg; with `inherit_bg` the base shows through.
+    /// - `.none` — explicitly no bg, even when `inherit_bg` is on.
+    /// - any color — use that color.
+    arrow_bg: ?Color = null,
     /// Custom arrow characters per direction (what's shown when the tooltip
     /// is placed in that direction). Set to "" to hide a specific arrow.
     arrow_up: []const u8 = "▲",
@@ -193,9 +204,13 @@ pub const Tooltip = struct {
         const inner_w: usize = max_content_w + pad_h;
 
         // Inline styles
+        // border_bg: null → fall back to content_bg (backward compat)
+        //            .none → explicitly no bg (transparent)
+        //            color → use that color
+        const effective_border_bg = if (self.border_bg) |b| b else self.content_bg;
         var bdr_s = style_mod.Style{};
         bdr_s = bdr_s.fg(self.border_fg).inline_style(true);
-        if (!self.content_bg.isNone()) bdr_s = bdr_s.bg(self.content_bg);
+        if (!effective_border_bg.isNone()) bdr_s = bdr_s.bg(effective_border_bg);
 
         var pad_s = style_mod.Style{};
         pad_s = pad_s.inline_style(true);
@@ -359,7 +374,11 @@ pub const Tooltip = struct {
                 const aw = self.arrowDisplayWidth();
                 var arrow_style = CellStyle{};
                 arrow_style.fg = colorToCellColor(self.arrow_fg);
-                if (self.inherit_bg) {
+                if (self.arrow_bg) |abg| {
+                    // Explicitly set → use it (even .none = explicitly no bg)
+                    if (!abg.isNone()) arrow_style.bg = colorToCellColor(abg);
+                } else if (self.inherit_bg) {
+                    // Not specified → inherit from base when enabled
                     arrow_style.bg = grid.get(pos.arrow_y, pos.arrow_x).style.bg;
                 }
                 grid.set(pos.arrow_y, pos.arrow_x, .{

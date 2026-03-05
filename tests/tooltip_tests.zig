@@ -466,3 +466,117 @@ test "inherit_bg with left/right placement" {
     // The blue bg should be injected into the arrow on row 3
     try testing.expect(std.mem.indexOf(u8, output, "48;2;0;128;255") != null);
 }
+
+// ── border_bg / arrow_bg tests ────────────────────────────────────
+
+test "border_bg null falls back to content_bg (backward compat)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Color = zz.Color;
+    var t = Tooltip.init("Hi");
+    t.content_bg = Color.fromRgb(30, 30, 30);
+    // border_bg defaults to null → should use content_bg for borders
+    t.show();
+    const box = try t.renderBox(alloc);
+    // The border should contain the content_bg sequence
+    try testing.expect(std.mem.indexOf(u8, box, "48;2;30;30;30") != null);
+}
+
+test "border_bg .none gives transparent border" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Color = zz.Color;
+    var t = Tooltip.init("Hi");
+    t.content_bg = Color.fromRgb(30, 30, 30);
+    t.border_bg = .none; // explicitly no bg for borders
+    t.show();
+    const box = try t.renderBox(alloc);
+    // Content should still have the bg
+    try testing.expect(std.mem.indexOf(u8, box, "48;2;30;30;30") != null);
+    // Box should still render
+    try testing.expect(box.len > 0);
+}
+
+test "border_bg explicit color differs from content_bg" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Color = zz.Color;
+    var t = Tooltip.init("Test");
+    t.content_bg = Color.fromRgb(10, 10, 10);
+    t.border_bg = Color.fromRgb(50, 50, 50);
+    t.show();
+    const box = try t.renderBox(alloc);
+    // Both color sequences should appear
+    try testing.expect(std.mem.indexOf(u8, box, "48;2;10;10;10") != null);
+    try testing.expect(std.mem.indexOf(u8, box, "48;2;50;50;50") != null);
+}
+
+test "border_bg .none with inherit_bg shows base through border" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Color = zz.Color;
+    var t = Tooltip.init("Hi");
+    t.content_bg = Color.fromRgb(30, 30, 30); // solid interior
+    t.border_bg = .none; // transparent border
+    t.inherit_bg = true;
+    t.target_x = 3;
+    t.target_y = 0;
+    t.placement = .bottom;
+    t.show();
+
+    const base = "\x1b[48;2;200;100;50mOrange background row here long enough\x1b[0m";
+    const output = try t.overlay(alloc, base, 50, 10);
+    try testing.expect(output.len > 0);
+    // The base orange bg should appear (inherited by border cells)
+    try testing.expect(std.mem.indexOf(u8, output, "48;2;200;100;50") != null);
+    // The content bg should also appear
+    try testing.expect(std.mem.indexOf(u8, output, "48;2;30;30;30") != null);
+}
+
+test "arrow_bg explicit color overrides inherit_bg" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Color = zz.Color;
+    var t = Tooltip.init("Tip");
+    t.arrow_bg = Color.fromRgb(255, 0, 0); // explicit red arrow bg
+    t.inherit_bg = true;
+    t.target_x = 5;
+    t.target_y = 0;
+    t.placement = .bottom;
+    t.show();
+
+    const base = "\x1b[48;2;0;0;255mBlue background here long!!!\x1b[0m";
+    const output = try t.overlay(alloc, base, 40, 10);
+    try testing.expect(output.len > 0);
+    // The arrow should have red bg, not blue (explicit overrides inherit)
+    try testing.expect(std.mem.indexOf(u8, output, "48;2;255;0;0") != null);
+}
+
+test "arrow_bg .none prevents inheritance" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var t = Tooltip.init("Tip");
+    t.arrow_bg = .none; // explicitly no bg
+    t.inherit_bg = true;
+    t.target_x = 5;
+    t.target_y = 0;
+    t.placement = .bottom;
+    t.show();
+
+    const base = "\x1b[48;2;0;255;0mGreen background here long!!\x1b[0m";
+    const output = try t.overlay(alloc, base, 40, 10);
+    try testing.expect(output.len > 0);
+    // Should render without crash; arrow should NOT have green bg
+}

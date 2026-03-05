@@ -30,7 +30,7 @@ const Model = struct {
     };
 
     pub fn init(self: *Model, _: *zz.Context) zz.Cmd(Msg) {
-        self.tooltip = zz.Tooltip.init("This is a tooltip!");
+        self.tooltip = clearTooltip("This is a tooltip!");
         self.status = "Press 1-7 to show tooltips, h to hide, q to quit";
         return .none;
     }
@@ -42,7 +42,7 @@ const Model = struct {
                     .char => |c| switch (c) {
                         'q' => return .quit,
                         '1' => {
-                            self.tooltip = zz.Tooltip.init("Bottom placement tooltip");
+                            self.tooltip = clearTooltip("Bottom placement tooltip");
                             self.tooltip.target_x = self.btn_positions[0].x;
                             self.tooltip.target_y = self.btn_positions[0].y;
                             self.tooltip.target_width = self.btn_positions[0].w;
@@ -51,7 +51,7 @@ const Model = struct {
                             self.status = "Showing: bottom placement";
                         },
                         '2' => {
-                            self.tooltip = zz.Tooltip.init("Top placement tooltip");
+                            self.tooltip = clearTooltip("Top placement tooltip");
                             self.tooltip.target_x = self.btn_positions[1].x;
                             self.tooltip.target_y = self.btn_positions[1].y;
                             self.tooltip.target_width = self.btn_positions[1].w;
@@ -60,7 +60,7 @@ const Model = struct {
                             self.status = "Showing: top placement";
                         },
                         '3' => {
-                            self.tooltip = zz.Tooltip.init("Right placement");
+                            self.tooltip = clearTooltip("Right placement");
                             self.tooltip.target_x = self.btn_positions[2].x;
                             self.tooltip.target_y = self.btn_positions[2].y;
                             self.tooltip.target_width = self.btn_positions[2].w;
@@ -69,7 +69,7 @@ const Model = struct {
                             self.status = "Showing: right placement";
                         },
                         '4' => {
-                            self.tooltip = zz.Tooltip.init("Left placement");
+                            self.tooltip = clearTooltip("Left placement");
                             self.tooltip.target_x = self.btn_positions[3].x;
                             self.tooltip.target_y = self.btn_positions[3].y;
                             self.tooltip.target_width = self.btn_positions[3].w;
@@ -78,7 +78,7 @@ const Model = struct {
                             self.status = "Showing: left placement";
                         },
                         '5' => {
-                            self.tooltip = zz.Tooltip.titled("File Info", "Size: 1.2 MB\nModified: Today\nType: Document");
+                            self.tooltip = clearTitled("File Info", "Size: 1.2 MB\nModified: Today\nType: Document");
                             self.tooltip.target_x = self.btn_positions[4].x;
                             self.tooltip.target_y = self.btn_positions[4].y;
                             self.tooltip.target_width = self.btn_positions[4].w;
@@ -86,7 +86,7 @@ const Model = struct {
                             self.status = "Showing: titled tooltip";
                         },
                         '6' => {
-                            self.tooltip = zz.Tooltip.help("Press Enter to confirm your selection");
+                            self.tooltip = clearHelp("Press Enter to confirm your selection");
                             self.tooltip.target_x = self.btn_positions[5].x;
                             self.tooltip.target_y = self.btn_positions[5].y;
                             self.tooltip.target_width = self.btn_positions[5].w;
@@ -94,7 +94,7 @@ const Model = struct {
                             self.status = "Showing: help-style tooltip";
                         },
                         '7' => {
-                            self.tooltip = zz.Tooltip.shortcut("Save", "Ctrl+S");
+                            self.tooltip = clearShortcut("Save", "Ctrl+S");
                             self.tooltip.target_x = self.btn_positions[6].x;
                             self.tooltip.target_y = self.btn_positions[6].y;
                             self.tooltip.target_width = self.btn_positions[6].w;
@@ -141,7 +141,7 @@ const Model = struct {
 
         // Render buttons in a row
         var btn_s = zz.Style{};
-        btn_s = btn_s.fg(zz.Color.white()).bg(zz.Color.gray(5)).inline_style(true);
+        btn_s = btn_s.fg(zz.Color.white()).inline_style(true);
 
         var btn_parts: [7][]const u8 = undefined;
         for (labels, 0..) |label, i| {
@@ -207,6 +207,43 @@ const Model = struct {
         return base;
     }
 };
+
+/// Create a tooltip with clear terminal background (no bg color, no inheritance).
+fn clearTooltip(text: []const u8) zz.Tooltip {
+    var t = zz.Tooltip.init(text);
+    t.content_bg = .none;
+    t.border_bg = .none;
+    t.arrow_bg = .none;
+    t.inherit_bg = false;
+    return t;
+}
+
+fn clearTitled(title: []const u8, text: []const u8) zz.Tooltip {
+    var t = zz.Tooltip.titled(title, text);
+    t.content_bg = .none;
+    t.border_bg = .none;
+    t.arrow_bg = .none;
+    t.inherit_bg = false;
+    return t;
+}
+
+fn clearHelp(text: []const u8) zz.Tooltip {
+    var t = zz.Tooltip.help(text);
+    t.content_bg = .none;
+    t.border_bg = .none;
+    t.arrow_bg = .none;
+    t.inherit_bg = false;
+    return t;
+}
+
+fn clearShortcut(label: []const u8, key: []const u8) zz.Tooltip {
+    var t = zz.Tooltip.shortcut(label, key);
+    t.content_bg = .none;
+    t.border_bg = .none;
+    t.arrow_bg = .none;
+    t.inherit_bg = false;
+    return t;
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
