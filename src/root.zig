@@ -119,6 +119,8 @@ pub const components = struct {
     pub const tooltip = @import("components/tooltip.zig");
     pub const Tooltip = tooltip.Tooltip;
     pub const focus = @import("components/focus.zig");
+    pub const tab_group = @import("components/tab_group.zig");
+    pub const TabGroup = tab_group.TabGroup;
 };
 
 // Re-export commonly used components at top level
@@ -136,12 +138,17 @@ pub const Notification = components.Notification;
 pub const Confirm = components.Confirm;
 pub const Modal = components.Modal;
 pub const Tooltip = components.Tooltip;
+pub const TabGroup = components.TabGroup;
 
 // Focus management
 pub const FocusGroup = components.focus.FocusGroup;
 pub const FocusStyle = components.focus.FocusStyle;
 pub const KeyBind = components.focus.KeyBind;
 pub const isFocusable = components.focus.isFocusable;
+pub const TabChange = components.tab_group.Change;
+pub const TabChangeReason = components.tab_group.ChangeReason;
+pub const TabKeyResult = components.tab_group.KeyResult;
+pub const TabKeyBind = components.tab_group.KeyBind;
 
 // Keybinding management
 pub const keybinding = @import("components/keybinding.zig");

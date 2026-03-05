@@ -8,7 +8,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 
 - **Elm Architecture** - Model-Update-View pattern for predictable state management
 - **Rich Styling** - Comprehensive styling system with colors, borders, padding, margin backgrounds, per-side border colors, tab width control, style ranges, full style inheritance, text transforms, whitespace formatting controls, and unset methods
-- **18 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker
+- **19 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
 - **Focus Management** - `FocusGroup` with Tab/Shift+Tab cycling, comptime focusable protocol, `FocusStyle` for visual focus ring indicators
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
@@ -463,6 +463,38 @@ if (tip.isVisible()) {
 
 Presets: `Tooltip.init(text)`, `Tooltip.titled(title, text)`, `Tooltip.help(text)`, `Tooltip.shortcut(label, key)`. Supports `border_bg`, `arrow_bg`, `content_bg`, and `inherit_bg` for full background control.
 
+### TabGroup
+
+Multi-screen tab navigation with fully customizable keymaps, styles, and optional per-tab route callbacks:
+
+```zig
+var tabs = zz.TabGroup.init(allocator);
+defer tabs.deinit();
+
+tabs.show_numbers = true;
+tabs.max_width = 60;      // overflow-aware tab strip
+tabs.overflow_mode = .scroll; // .none, .clip, .scroll
+tabs.activate_on_focus = true; // set false for manual activation
+
+_ = try tabs.addTab(.{ .id = "home", .title = "Home" });
+_ = try tabs.addTab(.{ .id = "logs", .title = "Logs", .enabled = false });
+_ = try tabs.addTab(.{ .id = "settings", .title = "Settings" });
+
+// In update:
+const result = tabs.handleKey(key_event); // Left/Right, Home/End, 1..9 by default
+_ = result.change; // optional active-tab change info
+
+// Optional: route unconsumed keys to active tab callback
+const routed = tabs.handleKeyAndRoute(key_event).routed;
+_ = routed;
+
+// In view:
+const strip = try tabs.view(allocator);
+const with_content = try tabs.viewWithContent(allocator, "No active tab");
+```
+
+Per-tab route callback hooks: `render_fn`, `key_fn`, `on_enter_fn`, `on_leave_fn`.
+
 ### More Components
 
 - **Help** - Display key bindings with responsive truncation
@@ -897,6 +929,7 @@ zig build run-file_browser
 zig build run-dashboard
 zig build run-showcase       # Multi-tab demo of all features
 zig build run-focus_form     # Focus management with Tab cycling
+zig build run-tabs           # TabGroup multi-screen routing
 ```
 
 ## Building
