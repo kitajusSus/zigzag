@@ -114,6 +114,8 @@ pub const components = struct {
     pub const notification = @import("components/notification.zig");
     pub const Notification = notification.Notification;
     pub const Confirm = @import("components/confirm.zig").Confirm;
+    pub const modal = @import("components/modal.zig");
+    pub const Modal = modal.Modal;
     pub const focus = @import("components/focus.zig");
 };
 
@@ -130,6 +132,7 @@ pub const StyledList = components.StyledList;
 pub const Sparkline = components.Sparkline;
 pub const Notification = components.Notification;
 pub const Confirm = components.Confirm;
+pub const Modal = components.Modal;
 
 // Focus management
 pub const FocusGroup = components.focus.FocusGroup;
