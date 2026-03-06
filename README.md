@@ -8,7 +8,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 
 - **Elm Architecture** - Model-Update-View pattern for predictable state management
 - **Rich Styling** - Comprehensive styling system with colors, borders, padding, margin backgrounds, per-side border colors, tab width control, style ranges, full style inheritance, text transforms, whitespace formatting controls, and unset methods
-- **19 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
+- **22 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Chart, BarChart, Canvas, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
 - **Focus Management** - `FocusGroup` with Tab/Shift+Tab cycling, comptime focusable protocol, `FocusStyle` for visual focus ring indicators
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
@@ -384,15 +384,70 @@ try list.addItemNested("Sub-item", 1);
 
 ### Sparkline
 
-Mini chart using Unicode block elements:
+Mini chart using Unicode block elements with configurable bucketing, ranges, and gradients:
 
 ```zig
 var spark = zz.Sparkline.init(allocator);
 spark.setWidth(20);
+spark.setSummary(.average);
+spark.setGradient(zz.Color.hex("#F97316"), zz.Color.hex("#22C55E"));
 try spark.push(10.0);
 try spark.push(25.0);
 try spark.push(15.0);
 const chart = try spark.view(allocator);
+```
+
+### Chart
+
+Cartesian chart with multiple datasets, axes, grid lines, legends, and selectable markers:
+
+```zig
+var chart = zz.Chart.init(allocator);
+chart.setSize(48, 16);
+chart.setMarker(.braille);
+chart.x_axis = .{ .title = "Time", .tick_count = 5, .show_grid = true };
+chart.y_axis = .{ .title = "CPU", .tick_count = 5, .show_grid = true };
+
+var dataset = try zz.ChartDataset.init(allocator, "load");
+dataset.setStyle((zz.Style{}).fg(zz.Color.cyan()).bold(true));
+dataset.setShowPoints(true);
+try dataset.setPoints(&.{
+    .{ .x = 0, .y = 20 },
+    .{ .x = 1, .y = 45 },
+    .{ .x = 2, .y = 30 },
+});
+try chart.addDataset(dataset);
+
+const view = try chart.view(allocator);
+```
+
+### BarChart
+
+Vertical or horizontal bar chart with labels, values, and positive/negative baselines:
+
+```zig
+var bars = zz.BarChart.init(allocator);
+bars.setOrientation(.horizontal);
+bars.show_values = true;
+try bars.addBar(try zz.Bar.init(allocator, "api", 31));
+try bars.addBar(try zz.Bar.init(allocator, "db", -12));
+const view = try bars.view(allocator);
+```
+
+### Canvas
+
+Low-level plotting canvas for custom graphs, scatter plots, and braille-dot drawing:
+
+```zig
+var canvas = zz.Canvas.init(allocator);
+defer canvas.deinit();
+
+canvas.setSize(24, 10);
+canvas.setMarker(.braille);
+canvas.setRanges(.{ .min = -1, .max = 1 }, .{ .min = -1, .max = 1 });
+try canvas.drawLineStyled(-1, -1, 1, 1, (zz.Style{}).fg(zz.Color.yellow()), null);
+try canvas.drawPointStyled(0.25, 0.7, (zz.Style{}).fg(zz.Color.cyan()), null);
+const view = try canvas.view(allocator);
 ```
 
 ### Notification/Toast
