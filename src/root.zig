@@ -195,6 +195,12 @@ pub const CacheImage = command.CacheImage;
 pub const PlaceCachedImage = command.PlaceCachedImage;
 pub const DeleteImage = command.DeleteImage;
 pub const ImageCapabilities = terminal.ImageCapabilities;
+pub const Osc52Target = terminal.Osc52Target;
+pub const Osc52Passthrough = terminal.Osc52Passthrough;
+pub const Osc52Config = terminal.Osc52Config;
+pub const Osc52WriteOptions = terminal.Osc52WriteOptions;
+pub const Osc52ReadOptions = terminal.Osc52ReadOptions;
+pub const OscTerminator = terminal.ansi.OscTerminator;
 
 // Color utilities
 pub const ColorProfile = color.ColorProfile;

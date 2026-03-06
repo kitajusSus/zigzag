@@ -156,6 +156,84 @@ pub const SixelImageFileOptions = struct {
     height_pixels: ?u32 = null,
 };
 
+/// OSC 52 clipboard target selector.
+/// Standard values are `c`, `p`, `q`, `s`, or cut buffers `0`..`7`.
+pub const Osc52Target = union(enum) {
+    clipboard,
+    primary,
+    secondary,
+    select,
+    cut_buffer: u3,
+    raw: []const u8,
+
+    fn encode(self: Osc52Target, scratch: *[1]u8) []const u8 {
+        return switch (self) {
+            .clipboard => "c",
+            .primary => "p",
+            .secondary => "q",
+            .select => "s",
+            .cut_buffer => |n| blk: {
+                scratch[0] = @as(u8, '0') + @as(u8, n);
+                break :blk scratch[0..1];
+            },
+            .raw => |value| value,
+        };
+    }
+};
+
+/// OSC 52 passthrough strategy.
+/// `tmux` and `dcs` wrap OSC inside DCS passthrough for multiplexers.
+pub const Osc52Passthrough = enum {
+    auto,
+    none,
+    tmux,
+    dcs,
+};
+
+/// Default OSC 52 behavior for this terminal instance.
+pub const Osc52Config = struct {
+    /// Master switch for clipboard writes.
+    enabled: bool = true,
+    /// Allow OSC 52 clipboard queries (`?`) for reading clipboard content.
+    query_enabled: bool = true,
+    /// Require a TTY before sending OSC 52.
+    require_tty: bool = true,
+    /// Default target selection.
+    target: Osc52Target = .clipboard,
+    /// Sequence terminator (BEL is widely compatible).
+    terminator: ansi.OscTerminator = .bel,
+    /// Passthrough mode (`auto` detects tmux/screen-like environments).
+    passthrough: Osc52Passthrough = .auto,
+    /// Optional input payload limit (bytes). `null` = no library limit.
+    max_bytes: ?usize = null,
+    /// Query timeout for clipboard reads.
+    query_timeout_ms: i32 = 180,
+    /// Optional decoded output limit for clipboard reads.
+    max_read_bytes: ?usize = null,
+    /// Require selector match on responses (strict mode).
+    strict_query_target: bool = false,
+};
+
+/// Per-call OSC 52 overrides.
+pub const Osc52WriteOptions = struct {
+    target: ?Osc52Target = null,
+    terminator: ?ansi.OscTerminator = null,
+    passthrough: ?Osc52Passthrough = null,
+    require_tty: ?bool = null,
+    max_bytes: ?usize = null,
+};
+
+/// Per-call OSC 52 clipboard query overrides.
+pub const Osc52ReadOptions = struct {
+    target: ?Osc52Target = null,
+    terminator: ?ansi.OscTerminator = null,
+    passthrough: ?Osc52Passthrough = null,
+    require_tty: ?bool = null,
+    timeout_ms: ?i32 = null,
+    max_bytes: ?usize = null,
+    strict_target: ?bool = null,
+};
+
 /// Terminal configuration options
 pub const Config = struct {
     /// Use alternate screen buffer
@@ -172,6 +250,8 @@ pub const Config = struct {
     output: ?std.fs.File = null,
     /// Enable Kitty keyboard protocol
     kitty_keyboard: bool = false,
+    /// OSC 52 clipboard configuration
+    osc52: Osc52Config = .{},
 };
 
 /// Terminal abstraction
@@ -182,6 +262,8 @@ pub const Terminal = struct {
     stdin: std.fs.File,
     write_buffer: [4096]u8 = undefined,
     write_pos: usize = 0,
+    pending_input: [8192]u8 = undefined,
+    pending_input_len: usize = 0,
     unicode_width_caps: UnicodeWidthCapabilities = .{},
     image_caps: ImageCapabilities = .{},
 
@@ -321,7 +403,16 @@ pub const Terminal = struct {
 
     /// Read input with timeout (in milliseconds)
     pub fn readInput(self: *Terminal, buffer: []u8, timeout_ms: i32) !usize {
-        return platform.readInput(&self.state, buffer, timeout_ms);
+        if (self.pending_input_len > 0) {
+            const take = @min(buffer.len, self.pending_input_len);
+            @memcpy(buffer[0..take], self.pending_input[0..take]);
+            if (take < self.pending_input_len) {
+                std.mem.copyForwards(u8, self.pending_input[0 .. self.pending_input_len - take], self.pending_input[take..self.pending_input_len]);
+            }
+            self.pending_input_len -= take;
+            return take;
+        }
+        return self.readPlatformInput(buffer, timeout_ms);
     }
 
     /// Check if terminal was resized
@@ -388,6 +479,88 @@ pub const Terminal = struct {
         try self.writeBytes("\x1b]0;");
         try self.writeBytes(title);
         try self.writeBytes("\x07");
+    }
+
+    /// Copy bytes to the system clipboard using OSC 52 with instance defaults.
+    /// Returns `false` when disabled by config, rejected by local guardrails, or not suitable for this output.
+    pub fn setClipboard(self: *Terminal, bytes: []const u8) !bool {
+        return self.setClipboardWithOptions(bytes, .{});
+    }
+
+    /// Copy bytes to the system clipboard using OSC 52 with per-call overrides.
+    pub fn setClipboardWithOptions(self: *Terminal, bytes: []const u8, options: Osc52WriteOptions) !bool {
+        if (!self.config.osc52.enabled) return false;
+
+        const require_tty = options.require_tty orelse self.config.osc52.require_tty;
+        if (require_tty and !self.isTty()) return false;
+
+        const max_bytes = options.max_bytes orelse self.config.osc52.max_bytes;
+        if (max_bytes) |limit| {
+            if (bytes.len > limit) return false;
+        }
+
+        const terminator = options.terminator orelse self.config.osc52.terminator;
+        const passthrough_mode = options.passthrough orelse self.config.osc52.passthrough;
+        const passthrough = self.resolveOsc52Passthrough(passthrough_mode);
+
+        var target_scratch: [1]u8 = undefined;
+        const target = (options.target orelse self.config.osc52.target).encode(&target_scratch);
+
+        try ansi.osc52Start(self.writer(), target, passthrough);
+        try self.writeBase64(bytes);
+        try ansi.osc52End(self.writer(), terminator, passthrough);
+        return true;
+    }
+
+    /// Query clipboard bytes via OSC 52 (`...?;?`).
+    /// Returns `null` when unsupported, disabled, timed out, or rejected by guardrails.
+    pub fn getClipboard(self: *Terminal, allocator: std.mem.Allocator) !?[]u8 {
+        return self.getClipboardWithOptions(allocator, .{});
+    }
+
+    /// Query clipboard bytes via OSC 52 (`...?;?`) with per-call overrides.
+    /// Returns `null` when unsupported, disabled, timed out, or rejected by guardrails.
+    pub fn getClipboardWithOptions(self: *Terminal, allocator: std.mem.Allocator, options: Osc52ReadOptions) !?[]u8 {
+        if (!self.config.osc52.enabled or !self.config.osc52.query_enabled) return null;
+
+        const require_tty = options.require_tty orelse self.config.osc52.require_tty;
+        if (require_tty and !self.isTty()) return null;
+
+        const timeout_ms = options.timeout_ms orelse self.config.osc52.query_timeout_ms;
+        const strict_target = options.strict_target orelse self.config.osc52.strict_query_target;
+        const max_bytes = options.max_bytes orelse self.config.osc52.max_read_bytes;
+
+        const terminator = options.terminator orelse self.config.osc52.terminator;
+        const passthrough_mode = options.passthrough orelse self.config.osc52.passthrough;
+        const passthrough = self.resolveOsc52Passthrough(passthrough_mode);
+
+        var target_scratch: [1]u8 = undefined;
+        const target = (options.target orelse self.config.osc52.target).encode(&target_scratch);
+
+        try ansi.osc52Start(self.writer(), target, passthrough);
+        try self.writeBytes("?");
+        try ansi.osc52End(self.writer(), terminator, passthrough);
+        try self.flush();
+
+        var collected = std.array_list.Managed(u8).init(allocator);
+        defer collected.deinit();
+
+        const deadline_ms = std.time.milliTimestamp() + timeout_ms;
+        while (std.time.milliTimestamp() < deadline_ms) {
+            var chunk: [256]u8 = undefined;
+            const n = self.readPlatformInput(&chunk, 30) catch 0;
+            if (n == 0) continue;
+            try collected.appendSlice(chunk[0..n]);
+
+            if (parseOsc52Response(collected.items, target, strict_target)) |parsed| {
+                const decoded = decodeOsc52Payload(allocator, parsed.payload_b64, max_bytes) catch null;
+                self.queueInputExceptRange(collected.items, parsed.consume_start, parsed.consume_end);
+                return decoded;
+            }
+        }
+
+        self.queueInput(collected.items);
+        return null;
     }
 
     /// Write a string at position
@@ -888,6 +1061,147 @@ pub const Terminal = struct {
             .iterm2_inline_image = iterm,
             .sixel = sixel,
         };
+    }
+
+    const Osc52ParsedResponse = struct {
+        payload_b64: []const u8,
+        consume_start: usize,
+        consume_end: usize,
+    };
+
+    fn parseOsc52Response(bytes: []const u8, expected_target: []const u8, strict_target: bool) ?Osc52ParsedResponse {
+        const prefix = "\x1b]52;";
+        var search_from: usize = 0;
+
+        while (search_from < bytes.len) {
+            const start = std.mem.indexOfPos(u8, bytes, search_from, prefix) orelse return null;
+            const selector_start = start + prefix.len;
+            const selector_end = std.mem.indexOfScalarPos(u8, bytes, selector_start, ';') orelse return null;
+            const payload_start = selector_end + 1;
+            const osc_end = indexOfOscTerminator(bytes, payload_start) orelse return null;
+            const osc_term_len: usize = if (bytes[osc_end] == 0x07) 1 else 2;
+
+            const selector = bytes[selector_start..selector_end];
+            if (strict_target and !std.mem.eql(u8, selector, expected_target)) {
+                search_from = selector_end + 1;
+                continue;
+            }
+
+            var payload_end = osc_end;
+            if (start > 0 and bytes[start - 1] == 0x1b and bytes[osc_end] == 0x1b and osc_end + 1 < bytes.len and bytes[osc_end + 1] == '\\') {
+                // DCS passthrough can encode inner ST as ESC ESC \.
+                if (payload_end > payload_start) payload_end -= 1;
+            }
+
+            var consume_start = start;
+            var consume_end = osc_end + osc_term_len;
+
+            if (findOpenDcsStart(bytes, start)) |dcs_start| {
+                if (indexOfSt(bytes, consume_end)) |outer_st| {
+                    consume_start = dcs_start;
+                    consume_end = outer_st + 2;
+                }
+            }
+
+            return .{
+                .payload_b64 = bytes[payload_start..payload_end],
+                .consume_start = consume_start,
+                .consume_end = consume_end,
+            };
+        }
+
+        return null;
+    }
+
+    fn findOpenDcsStart(bytes: []const u8, pos: usize) ?usize {
+        if (pos == 0) return null;
+
+        var i: usize = 0;
+        var open: ?usize = null;
+        while (i + 1 < pos) : (i += 1) {
+            if (bytes[i] != 0x1b) continue;
+            if (bytes[i + 1] == 'P') {
+                open = i;
+                i += 1;
+                continue;
+            }
+            if (bytes[i + 1] == '\\') {
+                open = null;
+                i += 1;
+                continue;
+            }
+        }
+        return open;
+    }
+
+    fn decodeOsc52Payload(allocator: std.mem.Allocator, payload_b64: []const u8, max_bytes: ?usize) !?[]u8 {
+        if (payload_b64.len == 0 or (payload_b64.len == 1 and payload_b64[0] == '?')) return null;
+
+        const decoder = std.base64.standard.Decoder;
+        const out_len = decoder.calcSizeForSlice(payload_b64) catch return null;
+
+        if (max_bytes) |limit| {
+            if (out_len > limit) return null;
+        }
+
+        const out = try allocator.alloc(u8, out_len);
+        errdefer allocator.free(out);
+        _ = decoder.decode(out, payload_b64) catch return null;
+        return out;
+    }
+
+    fn readPlatformInput(self: *Terminal, buffer: []u8, timeout_ms: i32) !usize {
+        return platform.readInput(&self.state, buffer, timeout_ms);
+    }
+
+    fn queueInput(self: *Terminal, bytes: []const u8) void {
+        if (bytes.len == 0) return;
+
+        const free_space = self.pending_input.len - self.pending_input_len;
+        const take = @min(bytes.len, free_space);
+        if (take == 0) return;
+
+        @memcpy(self.pending_input[self.pending_input_len .. self.pending_input_len + take], bytes[0..take]);
+        self.pending_input_len += take;
+    }
+
+    fn queueInputExceptRange(self: *Terminal, bytes: []const u8, start: usize, end: usize) void {
+        if (start > 0) {
+            self.queueInput(bytes[0..start]);
+        }
+        if (end < bytes.len) {
+            self.queueInput(bytes[end..]);
+        }
+    }
+
+    fn resolveOsc52Passthrough(self: *const Terminal, mode: Osc52Passthrough) ansi.Osc52Passthrough {
+        _ = self;
+        return switch (mode) {
+            .none => .none,
+            .tmux => .tmux,
+            .dcs => .dcs,
+            .auto => blk: {
+                if (envVarExists("TMUX")) break :blk .tmux;
+                if (envVarContains("TERM", "screen")) break :blk .dcs;
+                break :blk .none;
+            },
+        };
+    }
+
+    fn writeBase64(self: *Terminal, bytes: []const u8) !void {
+        const encoder = std.base64.standard.Encoder;
+        var b64_buf: [4096]u8 = undefined;
+        const raw_chunk_max: usize = (b64_buf.len / 4) * 3;
+
+        var src_index: usize = 0;
+        while (src_index < bytes.len) {
+            const take = @min(bytes.len - src_index, raw_chunk_max);
+            const chunk = bytes[src_index .. src_index + take];
+            const encoded_len = encoder.calcSize(chunk.len);
+            const encoded = encoder.encode(b64_buf[0..encoded_len], chunk);
+            try self.writeBytes(encoded);
+            src_index += take;
+        }
     }
 
     fn sendKittyGraphicsPayload(self: *Terminal, first_params: []const u8, payload: []const u8) !void {
@@ -1495,3 +1809,35 @@ pub const Terminal = struct {
         }
     };
 };
+
+test "parseOsc52Response direct BEL" {
+    const bytes = "\x1b]52;c;YQ==\x07";
+    const parsed = Terminal.parseOsc52Response(bytes, "c", true).?;
+    try std.testing.expectEqual(@as(usize, 0), parsed.consume_start);
+    try std.testing.expectEqual(bytes.len, parsed.consume_end);
+    try std.testing.expectEqualStrings("YQ==", parsed.payload_b64);
+}
+
+test "parseOsc52Response direct ST" {
+    const bytes = "\x1b]52;c;YQ==\x1b\\";
+    const parsed = Terminal.parseOsc52Response(bytes, "c", true).?;
+    try std.testing.expectEqual(@as(usize, 0), parsed.consume_start);
+    try std.testing.expectEqual(bytes.len, parsed.consume_end);
+    try std.testing.expectEqualStrings("YQ==", parsed.payload_b64);
+}
+
+test "parseOsc52Response tmux passthrough BEL" {
+    const bytes = "\x1bPtmux;\x1b\x1b]52;c;YQ==\x07\x1b\\";
+    const parsed = Terminal.parseOsc52Response(bytes, "c", true).?;
+    try std.testing.expectEqual(@as(usize, 0), parsed.consume_start);
+    try std.testing.expectEqual(bytes.len, parsed.consume_end);
+    try std.testing.expectEqualStrings("YQ==", parsed.payload_b64);
+}
+
+test "parseOsc52Response tmux passthrough ST" {
+    const bytes = "\x1bPtmux;\x1b\x1b]52;c;YQ==\x1b\x1b\\\x1b\\";
+    const parsed = Terminal.parseOsc52Response(bytes, "c", true).?;
+    try std.testing.expectEqual(@as(usize, 0), parsed.consume_start);
+    try std.testing.expectEqual(bytes.len, parsed.consume_end);
+    try std.testing.expectEqualStrings("YQ==", parsed.payload_b64);
+}

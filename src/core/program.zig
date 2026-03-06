@@ -166,6 +166,7 @@ pub fn Program(comptime Model: type) type {
                 .input = self.options.input,
                 .output = self.options.output,
                 .kitty_keyboard = self.options.kitty_keyboard,
+                .osc52 = self.options.osc52,
             });
 
             // Set title if provided

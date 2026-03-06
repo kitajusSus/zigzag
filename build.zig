@@ -24,6 +24,7 @@ pub fn build(b: *std.Build) void {
         "modal",
         "tooltip",
         "tabs",
+        "clipboard_osc52",
     };
 
     for (examples) |example_name| {

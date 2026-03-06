@@ -11,6 +11,17 @@ pub const DCS = ESC ++ "P";
 pub const APC = ESC ++ "_";
 pub const ST = ESC ++ "\\";
 
+pub const OscTerminator = enum {
+    bel,
+    st,
+};
+
+pub const Osc52Passthrough = enum {
+    none,
+    tmux,
+    dcs,
+};
+
 // Cursor control
 pub const cursor_hide = CSI ++ "?25l";
 pub const cursor_show = CSI ++ "?25h";
@@ -135,6 +146,85 @@ pub fn setTitle(writer: anytype, title: []const u8) !void {
     try writer.print(OSC ++ "0;{s}\x07", .{title});
 }
 
+fn writeOscTerminator(writer: anytype, terminator: OscTerminator) !void {
+    switch (terminator) {
+        .bel => try writer.writeAll("\x07"),
+        .st => try writer.writeAll(ST),
+    }
+}
+
+fn writeEscapedForDcs(writer: anytype, bytes: []const u8) !void {
+    var start: usize = 0;
+    for (bytes, 0..) |byte, idx| {
+        if (byte != 0x1b) continue;
+
+        if (idx > start) {
+            try writer.writeAll(bytes[start..idx]);
+        }
+        try writer.writeAll(ESC ++ ESC);
+        start = idx + 1;
+    }
+
+    if (start < bytes.len) {
+        try writer.writeAll(bytes[start..]);
+    }
+}
+
+/// Start an OSC 52 sequence and write the fixed header:
+/// `OSC 52 ; <target> ;`
+pub fn osc52Start(
+    writer: anytype,
+    target: []const u8,
+    passthrough: Osc52Passthrough,
+) !void {
+    switch (passthrough) {
+        .none => {
+            try writer.writeAll(OSC ++ "52;");
+            try writer.writeAll(target);
+            try writer.writeAll(";");
+        },
+        .tmux => {
+            try writer.writeAll(DCS ++ "tmux;");
+            try writeEscapedForDcs(writer, OSC ++ "52;");
+            try writeEscapedForDcs(writer, target);
+            try writeEscapedForDcs(writer, ";");
+        },
+        .dcs => {
+            try writer.writeAll(DCS);
+            try writeEscapedForDcs(writer, OSC ++ "52;");
+            try writeEscapedForDcs(writer, target);
+            try writeEscapedForDcs(writer, ";");
+        },
+    }
+}
+
+/// Finish an OSC 52 sequence started by `osc52Start`.
+pub fn osc52End(writer: anytype, terminator: OscTerminator, passthrough: Osc52Passthrough) !void {
+    switch (passthrough) {
+        .none => try writeOscTerminator(writer, terminator),
+        .tmux, .dcs => {
+            switch (terminator) {
+                .bel => try writer.writeAll("\x07"),
+                .st => try writer.writeAll(ESC ++ ESC ++ "\\"),
+            }
+            try writer.writeAll(ST);
+        },
+    }
+}
+
+/// Write a complete OSC 52 sequence with a pre-encoded base64 payload.
+pub fn osc52Encoded(
+    writer: anytype,
+    target: []const u8,
+    payload_b64: []const u8,
+    terminator: OscTerminator,
+    passthrough: Osc52Passthrough,
+) !void {
+    try osc52Start(writer, target, passthrough);
+    try writer.writeAll(payload_b64);
+    try osc52End(writer, terminator, passthrough);
+}
+
 /// SGR (Select Graphic Rendition) codes
 pub const SGR = struct {
     pub const reset = 0;
@@ -250,4 +340,32 @@ pub fn iterm2InlineImage(writer: anytype, params: []const u8, payload: []const u
     try writer.writeAll(":");
     try writer.writeAll(payload);
     try writer.writeAll("\x07");
+}
+
+test "osc52Encoded direct BEL" {
+    var buf: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    try osc52Encoded(stream.writer(), "c", "YQ==", .bel, .none);
+    try std.testing.expectEqualStrings("\x1b]52;c;YQ==\x07", stream.getWritten());
+}
+
+test "osc52Encoded direct ST" {
+    var buf: [128]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    try osc52Encoded(stream.writer(), "c", "YQ==", .st, .none);
+    try std.testing.expectEqualStrings("\x1b]52;c;YQ==\x1b\\", stream.getWritten());
+}
+
+test "osc52Encoded tmux passthrough BEL" {
+    var buf: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    try osc52Encoded(stream.writer(), "c", "YQ==", .bel, .tmux);
+    try std.testing.expectEqualStrings("\x1bPtmux;\x1b\x1b]52;c;YQ==\x07\x1b\\", stream.getWritten());
+}
+
+test "osc52Encoded tmux passthrough ST" {
+    var buf: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+    try osc52Encoded(stream.writer(), "c", "YQ==", .st, .tmux);
+    try std.testing.expectEqualStrings("\x1bPtmux;\x1b\x1b]52;c;YQ==\x1b\x1b\\\x1b\\", stream.getWritten());
 }

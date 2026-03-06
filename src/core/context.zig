@@ -167,6 +167,41 @@ pub const Context = struct {
         return false;
     }
 
+    /// Copy bytes to the system clipboard via OSC 52 using terminal defaults.
+    /// Returns false when clipboard output is unavailable or disabled.
+    pub fn setClipboard(self: *Context, bytes: []const u8) !bool {
+        if (self._terminal) |term| {
+            return term.setClipboard(bytes);
+        }
+        return false;
+    }
+
+    /// Copy bytes to the system clipboard via OSC 52 with per-call overrides.
+    pub fn setClipboardWithOptions(self: *Context, bytes: []const u8, options: terminal_mod.Osc52WriteOptions) !bool {
+        if (self._terminal) |term| {
+            return term.setClipboardWithOptions(bytes, options);
+        }
+        return false;
+    }
+
+    /// Query clipboard bytes via OSC 52 using terminal defaults.
+    /// Returns null when unavailable, blocked, or timed out.
+    pub fn getClipboard(self: *Context, allocator: std.mem.Allocator) !?[]u8 {
+        if (self._terminal) |term| {
+            return term.getClipboard(allocator);
+        }
+        return null;
+    }
+
+    /// Query clipboard bytes via OSC 52 with per-call overrides.
+    /// Returns null when unavailable, blocked, or timed out.
+    pub fn getClipboardWithOptions(self: *Context, allocator: std.mem.Allocator, options: terminal_mod.Osc52ReadOptions) !?[]u8 {
+        if (self._terminal) |term| {
+            return term.getClipboardWithOptions(allocator, options);
+        }
+        return null;
+    }
+
     /// Draw a PNG image file via Kitty graphics protocol (`t=f`).
     /// Returns false when unsupported or path is empty.
     pub fn drawKittyImageFromFile(self: *Context, path: []const u8, options: Terminal.KittyImageFileOptions) !bool {
@@ -308,6 +343,9 @@ pub const Options = struct {
 
     /// Enable Kitty keyboard protocol
     kitty_keyboard: bool = false,
+
+    /// OSC 52 clipboard configuration
+    osc52: terminal_mod.Osc52Config = .{},
 
     /// Force Unicode width strategy (`null` = auto-detect)
     unicode_width_strategy: ?unicode_mod.WidthStrategy = null,
