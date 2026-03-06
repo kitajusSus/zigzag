@@ -8,6 +8,7 @@ const Model = struct {
     bars: zz.BarChart,
     spark: zz.Sparkline,
     phase: f64,
+    sample_gate: u8,
 
     pub const Msg = union(enum) {
         key: zz.KeyEvent,
@@ -81,6 +82,7 @@ const Model = struct {
         }
 
         self.phase = 0;
+        self.sample_gate = 0;
         return zz.Cmd(Msg).tickMs(80);
     }
 
@@ -98,27 +100,31 @@ const Model = struct {
                 else => {},
             },
             .tick => {
-                self.phase += 1.0;
+                self.sample_gate +%= 1;
+                if (self.sample_gate >= 6) {
+                    self.sample_gate = 0;
+                    self.phase += 1.0;
 
-                var cpu = &self.chart.datasets.items[0];
-                var mem = &self.chart.datasets.items[1];
-                var backlog = &self.chart.datasets.items[2];
-                if (cpu.points.items.len >= 32) _ = cpu.points.orderedRemove(0);
-                if (mem.points.items.len >= 32) _ = mem.points.orderedRemove(0);
-                if (backlog.points.items.len >= 32) _ = backlog.points.orderedRemove(0);
+                    var cpu = &self.chart.datasets.items[0];
+                    var mem = &self.chart.datasets.items[1];
+                    var backlog = &self.chart.datasets.items[2];
+                    if (cpu.points.items.len >= 32) _ = cpu.points.orderedRemove(0);
+                    if (mem.points.items.len >= 32) _ = mem.points.orderedRemove(0);
+                    if (backlog.points.items.len >= 32) _ = backlog.points.orderedRemove(0);
 
-                const next_x = if (cpu.points.items.len == 0) 0.0 else cpu.points.items[cpu.points.items.len - 1].x + 1.0;
-                cpu.appendPoint(.{ .x = next_x, .y = 55.0 + @sin((self.phase + next_x) / 3.0) * 18.0 }) catch {};
-                mem.appendPoint(.{ .x = next_x, .y = 40.0 + @cos((self.phase + next_x) / 4.0) * 14.0 }) catch {};
-                backlog.appendPoint(.{ .x = next_x, .y = 18.0 + @sin((self.phase + next_x) / 2.4) * 7.0 + 3.0 }) catch {};
-                self.chart.x_axis.bounds = .{ .min = @max(0.0, next_x - 31.0), .max = next_x };
+                    const next_x = if (cpu.points.items.len == 0) 0.0 else cpu.points.items[cpu.points.items.len - 1].x + 1.0;
+                    cpu.appendPoint(.{ .x = next_x, .y = 55.0 + @sin((self.phase + next_x) / 3.0) * 18.0 }) catch {};
+                    mem.appendPoint(.{ .x = next_x, .y = 40.0 + @cos((self.phase + next_x) / 4.0) * 14.0 }) catch {};
+                    backlog.appendPoint(.{ .x = next_x, .y = 18.0 + @sin((self.phase + next_x) / 2.4) * 7.0 + 3.0 }) catch {};
+                    self.chart.x_axis.bounds = .{ .min = @max(0.0, next_x - 31.0), .max = next_x };
 
-                self.spark.push(30.0 + 10.0 * @sin((self.phase + next_x) / 5.0)) catch {};
+                    self.spark.push(30.0 + 10.0 * @sin((self.phase + next_x) / 5.0)) catch {};
 
-                self.bars.bars.items[0].value = 20.0 + @sin(self.phase / 3.0) * 18.0;
-                self.bars.bars.items[1].value = -5.0 - @cos(self.phase / 4.0) * 15.0;
-                self.bars.bars.items[2].value = 12.0 + @sin(self.phase / 5.0) * 12.0;
-                self.bars.bars.items[3].value = 8.0 + @cos(self.phase / 6.0) * 10.0;
+                    self.bars.bars.items[0].value = 20.0 + @sin(self.phase / 3.0) * 18.0;
+                    self.bars.bars.items[1].value = -5.0 - @cos(self.phase / 4.0) * 15.0;
+                    self.bars.bars.items[2].value = 12.0 + @sin(self.phase / 5.0) * 12.0;
+                    self.bars.bars.items[3].value = 8.0 + @cos(self.phase / 6.0) * 10.0;
+                }
 
                 return zz.Cmd(Msg).tickMs(80);
             },
@@ -129,25 +135,30 @@ const Model = struct {
 
     pub fn view(self: *const Model, ctx: *const zz.Context) []const u8 {
         const line_chart = self.chart.view(ctx.allocator) catch "";
+        const snapshot = self.renderStaticSnapshot(ctx) catch "";
         const bars = self.bars.view(ctx.allocator) catch "";
         const vertical = self.renderVerticalBars(ctx) catch "";
         const spark = self.spark.view(ctx.allocator) catch "";
         const canvas = self.renderCanvas(ctx) catch "";
 
         const top = zz.joinHorizontal(ctx.allocator, &.{
-            box(ctx, "Trend", line_chart) catch line_chart,
+            box(ctx, "Sampled Stream", line_chart) catch line_chart,
             "  ",
-            box(ctx, "Bars", bars) catch bars,
+            box(ctx, "Static Snapshot", snapshot) catch snapshot,
         }) catch line_chart;
+        const middle = zz.joinHorizontal(ctx.allocator, &.{
+            box(ctx, "Bars", bars) catch bars,
+            "  ",
+            box(ctx, "Vertical Bars", vertical) catch vertical,
+        }) catch bars;
         const bottom = zz.joinHorizontal(ctx.allocator, &.{
             box(ctx, "Sparkline", spark) catch spark,
             "  ",
             box(ctx, "Canvas", canvas) catch canvas,
-            "  ",
-            box(ctx, "Vertical Bars", vertical) catch vertical,
         }) catch spark;
 
-        const content = zz.joinVertical(ctx.allocator, &.{ top, "", bottom, "", "Press q to quit" }) catch top;
+        const note = "Live panels only update when a new sample arrives; snapshot panels stay fixed.";
+        const content = zz.joinVertical(ctx.allocator, &.{ top, "", middle, "", bottom, "", note, "", "Press q to quit" }) catch top;
         return zz.place.place(ctx.allocator, ctx.width, ctx.height, .center, .middle, content) catch content;
     }
 
@@ -190,6 +201,44 @@ const Model = struct {
         try chart.addBar(try zz.Bar.init(ctx.allocator, "Wed", 6));
         try chart.addBar(try zz.Bar.init(ctx.allocator, "Thu", -4));
         try chart.addBar(try zz.Bar.init(ctx.allocator, "Fri", 11));
+        return try chart.view(ctx.allocator);
+    }
+
+    fn renderStaticSnapshot(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        _ = self;
+        var chart = zz.Chart.init(ctx.allocator);
+        defer chart.deinit();
+
+        chart.setSize(34, 12);
+        chart.setMarker(.braille);
+        chart.setLegendPosition(.top);
+        chart.x_axis = .{ .title = "Quarter", .tick_count = 4, .show_grid = true };
+        chart.y_axis = .{ .title = "Revenue", .tick_count = 4, .show_grid = true };
+
+        var actual = try zz.ChartDataset.init(ctx.allocator, "Actual");
+        actual.setStyle((zz.Style{}).fg(zz.Color.hex("#22C55E")).bold(true));
+        actual.setInterpolation(.monotone_cubic);
+        actual.setInterpolationSteps(10);
+        actual.setShowPoints(true);
+        try actual.setPoints(&.{
+            .{ .x = 1, .y = 18 },
+            .{ .x = 2, .y = 24 },
+            .{ .x = 3, .y = 21 },
+            .{ .x = 4, .y = 29 },
+        });
+
+        var forecast = try zz.ChartDataset.init(ctx.allocator, "Forecast");
+        forecast.setStyle((zz.Style{}).fg(zz.Color.hex("#38BDF8")));
+        forecast.setInterpolation(.step_end);
+        try forecast.setPoints(&.{
+            .{ .x = 1, .y = 16 },
+            .{ .x = 2, .y = 22 },
+            .{ .x = 3, .y = 23 },
+            .{ .x = 4, .y = 27 },
+        });
+
+        try chart.addDataset(actual);
+        try chart.addDataset(forecast);
         return try chart.view(ctx.allocator);
     }
 };

@@ -401,7 +401,7 @@ const chart = try spark.view(allocator);
 
 Cartesian chart with multiple datasets, axes, grid lines, legends, selectable markers, and interpolation modes (`linear`, stepped, `catmull_rom`, `monotone_cubic`):
 
-See `zig build run-charts` or the `Charts` tab in `zig build run-showcase` for a combined demo of smoothed lines, stepped areas, horizontal bars, vertical bars, sparklines, and canvas plots.
+Charts are passive views over your data. They do not animate on their own; they only change when your model updates the dataset. `zig build run-charts` and the `Charts` tab in `zig build run-showcase` now demonstrate both static snapshot charts and slower sampled/live updates.
 
 ```zig
 var chart = zz.Chart.init(allocator);
@@ -1049,8 +1049,8 @@ zig build run-todo_list
 zig build run-text_editor
 zig build run-file_browser
 zig build run-dashboard
-zig build run-charts         # Charts, bars, sparkline, canvas, interpolation modes
-zig build run-showcase       # Multi-tab demo of all features, including a dedicated Charts tab
+zig build run-charts         # Static snapshots plus slower sampled chart updates
+zig build run-showcase       # Multi-tab demo of all features, including a Charts tab with static and live examples
 zig build run-focus_form     # Focus management with Tab cycling
 zig build run-tabs           # TabGroup multi-screen routing
 zig build run-clipboard_osc52 # OSC 52 clipboard output demo
