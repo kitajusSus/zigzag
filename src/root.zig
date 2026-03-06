@@ -111,6 +111,12 @@ pub const components = struct {
     pub const Tree = @import("components/tree.zig").Tree;
     pub const StyledList = @import("components/styled_list.zig").StyledList;
     pub const Sparkline = @import("components/sparkline.zig").Sparkline;
+    pub const charting = @import("components/charting.zig");
+    pub const canvas = @import("components/canvas.zig");
+    pub const Canvas = canvas.Canvas;
+    pub const chart = @import("components/chart.zig");
+    pub const Chart = chart.Chart;
+    pub const BarChart = @import("components/bar_chart.zig").BarChart;
     pub const notification = @import("components/notification.zig");
     pub const Notification = notification.Notification;
     pub const Confirm = @import("components/confirm.zig").Confirm;
@@ -134,6 +140,9 @@ pub const Table = components.Table;
 pub const Tree = components.Tree;
 pub const StyledList = components.StyledList;
 pub const Sparkline = components.Sparkline;
+pub const Canvas = components.Canvas;
+pub const Chart = components.Chart;
+pub const BarChart = components.BarChart;
 pub const Notification = components.Notification;
 pub const Confirm = components.Confirm;
 pub const Modal = components.Modal;
@@ -219,6 +228,18 @@ pub const compressAnsi = compress.compressAnsi;
 
 // Progress helpers
 pub const interpolateColor = @import("components/progress.zig").interpolateColor;
+pub const PlotPoint = components.charting.Point;
+pub const PlotRange = components.charting.DataRange;
+pub const PlotMarker = components.charting.Marker;
+pub const GraphType = components.chart.GraphType;
+pub const ChartInterpolation = components.chart.Interpolation;
+pub const Axis = components.chart.Axis;
+pub const AxisLabel = components.chart.AxisLabel;
+pub const ChartDataset = components.chart.Dataset;
+pub const LegendPosition = components.chart.LegendPosition;
+pub const Bar = @import("components/bar_chart.zig").Bar;
+pub const ChartOrientation = components.charting.Orientation;
+pub const SparkSummary = @import("components/sparkline.zig").Summary;
 
 test {
     std.testing.refAllDecls(@This());

@@ -1,0 +1,297 @@
+//! Charts example showcasing line charts, bar charts, sparklines, and the plotting canvas.
+
+const std = @import("std");
+const zz = @import("zigzag");
+
+const Model = struct {
+    chart: zz.Chart,
+    bars: zz.BarChart,
+    spark: zz.Sparkline,
+    viewport: zz.Viewport,
+    phase: f64,
+    sample_gate: u8,
+
+    pub const Msg = union(enum) {
+        key: zz.KeyEvent,
+        tick: zz.msg.Tick,
+        window_size: zz.msg.WindowSize,
+    };
+
+    pub fn init(self: *Model, ctx: *zz.Context) zz.Cmd(Msg) {
+        self.chart = zz.Chart.init(ctx.persistent_allocator);
+        self.chart.setSize(44, 16);
+        self.chart.setMarker(.braille);
+        self.chart.setLegendPosition(.top);
+        self.chart.x_axis = .{
+            .title = "Time",
+            .tick_count = 5,
+            .show_grid = true,
+        };
+        self.chart.y_axis = .{
+            .title = "Load",
+            .tick_count = 5,
+            .show_grid = true,
+        };
+
+        var cpu = zz.ChartDataset.init(ctx.persistent_allocator, "CPU") catch unreachable;
+        cpu.setStyle((zz.Style{}).fg(zz.Color.cyan()).bold(true));
+        cpu.setShowPoints(true);
+        cpu.setInterpolation(.monotone_cubic);
+        cpu.setInterpolationSteps(10);
+        var mem = zz.ChartDataset.init(ctx.persistent_allocator, "Memory") catch unreachable;
+        mem.setStyle((zz.Style{}).fg(zz.Color.magenta()));
+        mem.setInterpolation(.catmull_rom);
+        mem.setInterpolationSteps(10);
+        var backlog = zz.ChartDataset.init(ctx.persistent_allocator, "Backlog") catch unreachable;
+        backlog.setStyle((zz.Style{}).fg(zz.Color.yellow()));
+        backlog.setGraphType(.area);
+        backlog.setInterpolation(.step_center);
+        backlog.setFillBaseline(18.0);
+
+        for (0..24) |i| {
+            const x = @as(f64, @floatFromInt(i));
+            cpu.appendPoint(.{ .x = x, .y = 55.0 + @sin(x / 3.0) * 18.0 }) catch unreachable;
+            mem.appendPoint(.{ .x = x, .y = 40.0 + @cos(x / 4.0) * 14.0 }) catch unreachable;
+            backlog.appendPoint(.{ .x = x, .y = 18.0 + @sin(x / 2.4) * 7.0 + 3.0 }) catch unreachable;
+        }
+
+        self.chart.addDataset(cpu) catch unreachable;
+        self.chart.addDataset(mem) catch unreachable;
+        self.chart.addDataset(backlog) catch unreachable;
+
+        self.bars = zz.BarChart.init(ctx.persistent_allocator);
+        self.bars.setSize(30, 12);
+        self.bars.setOrientation(.horizontal);
+        self.bars.show_values = true;
+        self.bars.label_style = (zz.Style{}).fg(zz.Color.gray(18)).inline_style(true);
+        self.bars.positive_style = (zz.Style{}).fg(zz.Color.green()).inline_style(true);
+        self.bars.negative_style = (zz.Style{}).fg(zz.Color.red()).inline_style(true);
+        self.bars.axis_style = (zz.Style{}).fg(zz.Color.gray(10)).inline_style(true);
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "api", 31) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "db", -12) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "queue", 22) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "cache", 14) catch unreachable) catch unreachable;
+
+        self.spark = zz.Sparkline.init(ctx.persistent_allocator);
+        self.spark.setWidth(28);
+        self.spark.setSummary(.average);
+        self.spark.setRetentionLimit(120);
+        self.spark.setGradient(zz.Color.hex("#F97316"), zz.Color.hex("#22C55E"));
+
+        for (0..60) |i| {
+            const x = @as(f64, @floatFromInt(i));
+            self.spark.push(30.0 + 10.0 * @sin(x / 5.0)) catch unreachable;
+        }
+
+        self.viewport = zz.Viewport.init(ctx.persistent_allocator, ctx.width, ctx.height);
+        self.viewport.setWrap(false);
+        self.viewport.setScrollbarChars("·", "█");
+        self.viewport.setScrollbarStyle(
+            (zz.Style{}).fg(zz.Color.gray(8)).inline_style(true),
+            (zz.Style{}).fg(zz.Color.cyan()).inline_style(true),
+        );
+
+        self.phase = 0;
+        self.sample_gate = 0;
+        self.refreshViewport(ctx) catch {};
+        return zz.Cmd(Msg).tickMs(80);
+    }
+
+    pub fn deinit(self: *Model) void {
+        self.chart.deinit();
+        self.bars.deinit();
+        self.spark.deinit();
+        self.viewport.deinit();
+    }
+
+    pub fn update(self: *Model, msg: Msg, ctx: *zz.Context) zz.Cmd(Msg) {
+        switch (msg) {
+            .key => |key| switch (key.key) {
+                .char => |c| if (c == 'q') return .quit,
+                .escape => return .quit,
+                else => self.viewport.handleKey(key),
+            },
+            .window_size => {
+                self.refreshViewport(ctx) catch {};
+                return .none;
+            },
+            .tick => {
+                self.sample_gate +%= 1;
+                if (self.sample_gate >= 6) {
+                    self.sample_gate = 0;
+                    self.phase += 1.0;
+
+                    var cpu = &self.chart.datasets.items[0];
+                    var mem = &self.chart.datasets.items[1];
+                    var backlog = &self.chart.datasets.items[2];
+                    if (cpu.points.items.len >= 32) _ = cpu.points.orderedRemove(0);
+                    if (mem.points.items.len >= 32) _ = mem.points.orderedRemove(0);
+                    if (backlog.points.items.len >= 32) _ = backlog.points.orderedRemove(0);
+
+                    const next_x = if (cpu.points.items.len == 0) 0.0 else cpu.points.items[cpu.points.items.len - 1].x + 1.0;
+                    cpu.appendPoint(.{ .x = next_x, .y = 55.0 + @sin((self.phase + next_x) / 3.0) * 18.0 }) catch {};
+                    mem.appendPoint(.{ .x = next_x, .y = 40.0 + @cos((self.phase + next_x) / 4.0) * 14.0 }) catch {};
+                    backlog.appendPoint(.{ .x = next_x, .y = 18.0 + @sin((self.phase + next_x) / 2.4) * 7.0 + 3.0 }) catch {};
+                    self.chart.x_axis.bounds = .{ .min = @max(0.0, next_x - 31.0), .max = next_x };
+
+                    self.spark.push(30.0 + 10.0 * @sin((self.phase + next_x) / 5.0)) catch {};
+
+                    self.bars.bars.items[0].value = 20.0 + @sin(self.phase / 3.0) * 18.0;
+                    self.bars.bars.items[1].value = -5.0 - @cos(self.phase / 4.0) * 15.0;
+                    self.bars.bars.items[2].value = 12.0 + @sin(self.phase / 5.0) * 12.0;
+                    self.bars.bars.items[3].value = 8.0 + @cos(self.phase / 6.0) * 10.0;
+                }
+
+                self.refreshViewport(ctx) catch {};
+
+                return zz.Cmd(Msg).tickMs(80);
+            },
+        }
+
+        return .none;
+    }
+
+    pub fn view(self: *const Model, ctx: *const zz.Context) []const u8 {
+        const viewport_view = self.viewport.view(ctx.allocator) catch "";
+        return viewport_view;
+    }
+
+    fn refreshViewport(self: *Model, ctx: *zz.Context) !void {
+        self.viewport.setSize(ctx.width, ctx.height);
+        const content = try self.composeContent(ctx);
+        try self.viewport.setContent(content);
+    }
+
+    fn composeContent(self: *const Model, ctx: *zz.Context) ![]const u8 {
+        const line_chart = try self.chart.view(ctx.allocator);
+        const snapshot = try self.renderStaticSnapshot(ctx);
+        const bars = try self.bars.view(ctx.allocator);
+        const vertical = try self.renderVerticalBars(ctx);
+        const spark = try self.spark.view(ctx.allocator);
+        const canvas = try self.renderCanvas(ctx);
+
+        const top = try zz.joinHorizontal(ctx.allocator, &.{
+            try box(ctx, "Sampled Stream", line_chart),
+            "  ",
+            try box(ctx, "Static Snapshot", snapshot),
+        });
+        const middle = try zz.joinHorizontal(ctx.allocator, &.{
+            try box(ctx, "Bars", bars),
+            "  ",
+            try box(ctx, "Vertical Bars", vertical),
+        });
+        const bottom = try zz.joinHorizontal(ctx.allocator, &.{
+            try box(ctx, "Sparkline", spark),
+            "  ",
+            try box(ctx, "Canvas", canvas),
+        });
+
+        const note = "Scroll: j/k/h/l, arrows, PgUp/PgDn, g/G. Live panels update only when a new sample arrives.";
+        return try zz.joinVertical(ctx.allocator, &.{ top, "", middle, "", bottom, "", note, "", "Press q to quit" });
+    }
+
+    fn renderCanvas(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        var canvas = zz.Canvas.init(ctx.allocator);
+        defer canvas.deinit();
+
+        canvas.setSize(28, 10);
+        canvas.setMarker(.braille);
+        canvas.setRanges(.{ .min = -1.2, .max = 1.2 }, .{ .min = -1.2, .max = 1.2 });
+
+        var point_style = zz.Style{};
+        point_style = point_style.fg(zz.Color.yellow());
+        point_style = point_style.inline_style(true);
+
+        for (0..80) |i| {
+            const t = self.phase / 10.0 + @as(f64, @floatFromInt(i)) / 18.0;
+            const x = @sin(t * 1.7);
+            const y = @cos(t * 2.3);
+            try canvas.drawPointStyled(x, y, point_style, null);
+        }
+
+        return try canvas.view(ctx.allocator);
+    }
+
+    fn renderVerticalBars(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        _ = self;
+        var chart = zz.BarChart.init(ctx.allocator);
+        defer chart.deinit();
+
+        chart.setSize(22, 10);
+        chart.setOrientation(.vertical);
+        chart.show_values = true;
+        chart.label_style = (zz.Style{}).fg(zz.Color.gray(18)).inline_style(true);
+        chart.axis_style = (zz.Style{}).fg(zz.Color.gray(10)).inline_style(true);
+        chart.positive_style = (zz.Style{}).fg(zz.Color.hex("#F97316")).inline_style(true);
+        chart.negative_style = (zz.Style{}).fg(zz.Color.hex("#EF4444")).inline_style(true);
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Mon", 9));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Tue", 13));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Wed", 6));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Thu", -4));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Fri", 11));
+        return try chart.view(ctx.allocator);
+    }
+
+    fn renderStaticSnapshot(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        _ = self;
+        var chart = zz.Chart.init(ctx.allocator);
+        defer chart.deinit();
+
+        chart.setSize(34, 12);
+        chart.setMarker(.braille);
+        chart.setLegendPosition(.top);
+        chart.x_axis = .{ .title = "Quarter", .tick_count = 4, .show_grid = true };
+        chart.y_axis = .{ .title = "Revenue", .tick_count = 4, .show_grid = true };
+
+        var actual = try zz.ChartDataset.init(ctx.allocator, "Actual");
+        actual.setStyle((zz.Style{}).fg(zz.Color.hex("#22C55E")).bold(true));
+        actual.setInterpolation(.monotone_cubic);
+        actual.setInterpolationSteps(10);
+        actual.setShowPoints(true);
+        try actual.setPoints(&.{
+            .{ .x = 1, .y = 18 },
+            .{ .x = 2, .y = 24 },
+            .{ .x = 3, .y = 21 },
+            .{ .x = 4, .y = 29 },
+        });
+
+        var forecast = try zz.ChartDataset.init(ctx.allocator, "Forecast");
+        forecast.setStyle((zz.Style{}).fg(zz.Color.hex("#38BDF8")));
+        forecast.setInterpolation(.step_end);
+        try forecast.setPoints(&.{
+            .{ .x = 1, .y = 16 },
+            .{ .x = 2, .y = 22 },
+            .{ .x = 3, .y = 23 },
+            .{ .x = 4, .y = 27 },
+        });
+
+        try chart.addDataset(actual);
+        try chart.addDataset(forecast);
+        return try chart.view(ctx.allocator);
+    }
+};
+
+fn box(ctx: *const zz.Context, title: []const u8, body: []const u8) ![]const u8 {
+    var style = zz.Style{};
+    style = style.borderAll(zz.Border.rounded);
+    style = style.borderForeground(zz.Color.gray(12));
+    style = style.paddingAll(1);
+
+    var header_style = zz.Style{};
+    header_style = header_style.bold(true);
+    header_style = header_style.fg(zz.Color.cyan());
+    header_style = header_style.inline_style(true);
+    const header = try header_style.render(ctx.allocator, title);
+
+    const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ header, body });
+    return try style.render(ctx.allocator, content);
+}
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var program = try zz.Program(Model).init(gpa.allocator());
+    defer program.deinit();
+    try program.run();
+}

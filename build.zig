@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
         "text_editor",
         "file_browser",
         "dashboard",
+        "charts",
         "showcase",
         "focus_form",
         "modal",
@@ -65,6 +66,8 @@ pub fn build(b: *std.Build) void {
         "tests/modal_tests.zig",
         "tests/tooltip_tests.zig",
         "tests/tab_group_tests.zig",
+        "tests/chart_tests.zig",
+        "tests/viewport_tests.zig",
     };
 
     const test_step = b.step("test", "Run unit tests");

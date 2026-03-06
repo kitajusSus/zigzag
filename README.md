@@ -8,7 +8,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 
 - **Elm Architecture** - Model-Update-View pattern for predictable state management
 - **Rich Styling** - Comprehensive styling system with colors, borders, padding, margin backgrounds, per-side border colors, tab width control, style ranges, full style inheritance, text transforms, whitespace formatting controls, and unset methods
-- **19 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
+- **22 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Chart (linear, stepped, smoothed, area, scatter), BarChart, Canvas, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
 - **Focus Management** - `FocusGroup` with Tab/Shift+Tab cycling, comptime focusable protocol, `FocusStyle` for visual focus ring indicators
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
@@ -304,11 +304,17 @@ list.handleKey(key_event);
 
 ### Viewport
 
-Scrollable content area:
+Scrollable content area with wrapping, horizontal scrolling, customizable scrollbar chars/styles, and built-in navigation keys (`j/k/h/l`, arrows, `PgUp/PgDn`, `g/G`, `d/u`):
 
 ```zig
 var viewport = zz.Viewport.init(allocator, 80, 24);
 try viewport.setContent(long_text);
+viewport.setWrap(true);
+viewport.setScrollbarChars("·", "█");
+viewport.setScrollbarStyle(
+    (zz.Style{}).fg(zz.Color.gray(8)).inline_style(true),
+    (zz.Style{}).fg(zz.Color.cyan()).inline_style(true),
+);
 viewport.handleKey(key_event);  // Supports j/k, Page Up/Down, etc.
 ```
 
@@ -384,15 +390,74 @@ try list.addItemNested("Sub-item", 1);
 
 ### Sparkline
 
-Mini chart using Unicode block elements:
+Mini chart using Unicode block elements with configurable bucketing, ranges, and gradients:
 
 ```zig
 var spark = zz.Sparkline.init(allocator);
 spark.setWidth(20);
+spark.setSummary(.average);
+spark.setGradient(zz.Color.hex("#F97316"), zz.Color.hex("#22C55E"));
 try spark.push(10.0);
 try spark.push(25.0);
 try spark.push(15.0);
 const chart = try spark.view(allocator);
+```
+
+### Chart
+
+Cartesian chart with multiple datasets, axes, grid lines, legends, selectable markers, and interpolation modes (`linear`, stepped, `catmull_rom`, `monotone_cubic`):
+
+Charts are passive views over your data. They do not animate on their own; they only change when your model updates the dataset. `zig build run-charts` and the `Charts` tab in `zig build run-showcase` now demonstrate both static snapshot charts and slower sampled/live updates. The standalone `run-charts` demo also auto-sizes to the current terminal and uses a scrollable viewport when the content is larger than the screen.
+
+```zig
+var chart = zz.Chart.init(allocator);
+chart.setSize(48, 16);
+chart.setMarker(.braille);
+chart.x_axis = .{ .title = "Time", .tick_count = 5, .show_grid = true };
+chart.y_axis = .{ .title = "CPU", .tick_count = 5, .show_grid = true };
+
+var dataset = try zz.ChartDataset.init(allocator, "load");
+dataset.setStyle((zz.Style{}).fg(zz.Color.cyan()).bold(true));
+dataset.setShowPoints(true);
+dataset.setInterpolation(.monotone_cubic);
+dataset.setInterpolationSteps(10);
+try dataset.setPoints(&.{
+    .{ .x = 0, .y = 20 },
+    .{ .x = 1, .y = 45 },
+    .{ .x = 2, .y = 30 },
+});
+try chart.addDataset(dataset);
+
+const view = try chart.view(allocator);
+```
+
+### BarChart
+
+Vertical or horizontal bar chart with labels, values, and positive/negative baselines:
+
+```zig
+var bars = zz.BarChart.init(allocator);
+bars.setOrientation(.horizontal);
+bars.show_values = true;
+try bars.addBar(try zz.Bar.init(allocator, "api", 31));
+try bars.addBar(try zz.Bar.init(allocator, "db", -12));
+const view = try bars.view(allocator);
+```
+
+### Canvas
+
+Low-level plotting canvas for custom graphs, scatter plots, and braille-dot drawing:
+
+```zig
+var canvas = zz.Canvas.init(allocator);
+defer canvas.deinit();
+
+canvas.setSize(24, 10);
+canvas.setMarker(.braille);
+canvas.setRanges(.{ .min = -1, .max = 1 }, .{ .min = -1, .max = 1 });
+try canvas.drawLineStyled(-1, -1, 1, 1, (zz.Style{}).fg(zz.Color.yellow()), null);
+try canvas.drawPointStyled(0.25, 0.7, (zz.Style{}).fg(zz.Color.cyan()), null);
+const view = try canvas.view(allocator);
 ```
 
 ### Notification/Toast
@@ -990,7 +1055,8 @@ zig build run-todo_list
 zig build run-text_editor
 zig build run-file_browser
 zig build run-dashboard
-zig build run-showcase       # Multi-tab demo of all features
+zig build run-charts         # Static snapshots plus slower sampled chart updates
+zig build run-showcase       # Multi-tab demo of all features, including a Charts tab with static and live examples
 zig build run-focus_form     # Focus management with Tab cycling
 zig build run-tabs           # TabGroup multi-screen routing
 zig build run-clipboard_osc52 # OSC 52 clipboard output demo
