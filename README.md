@@ -8,7 +8,7 @@ A delightful TUI framework for Zig, inspired by [Bubble Tea](https://github.com/
 
 - **Elm Architecture** - Model-Update-View pattern for predictable state management
 - **Rich Styling** - Comprehensive styling system with colors, borders, padding, margin backgrounds, per-side border colors, tab width control, style ranges, full style inheritance, text transforms, whitespace formatting controls, and unset methods
-- **22 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Chart, BarChart, Canvas, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
+- **22 Pre-built Components** - TextInput (with autocomplete/word movement), TextArea, List (fuzzy filtering), Table (interactive with row selection), Viewport, Progress (color gradients), Spinner, Tree, StyledList, Sparkline, Chart (linear, stepped, smoothed, area, scatter), BarChart, Canvas, Notification/Toast, Confirm dialog, Modal/Popup, Tooltip, Help, Paginator, Timer, FilePicker, TabGroup (multi-view routing)
 - **Focus Management** - `FocusGroup` with Tab/Shift+Tab cycling, comptime focusable protocol, `FocusStyle` for visual focus ring indicators
 - **Keybinding Management** - Structured `KeyBinding`/`KeyMap` with matching, display formatting, and Help component integration
 - **Color System** - ANSI 16, 256, and TrueColor with adaptive colors, color profile detection, and dark background detection
@@ -400,6 +400,8 @@ const chart = try spark.view(allocator);
 ### Chart
 
 Cartesian chart with multiple datasets, axes, grid lines, legends, selectable markers, and interpolation modes (`linear`, stepped, `catmull_rom`, `monotone_cubic`):
+
+See `zig build run-charts` or the `Charts` tab in `zig build run-showcase` for a combined demo of smoothed lines, stepped areas, horizontal bars, vertical bars, sparklines, and canvas plots.
 
 ```zig
 var chart = zz.Chart.init(allocator);
@@ -1047,7 +1049,8 @@ zig build run-todo_list
 zig build run-text_editor
 zig build run-file_browser
 zig build run-dashboard
-zig build run-showcase       # Multi-tab demo of all features
+zig build run-charts         # Charts, bars, sparkline, canvas, interpolation modes
+zig build run-showcase       # Multi-tab demo of all features, including a dedicated Charts tab
 zig build run-focus_form     # Focus management with Tab cycling
 zig build run-tabs           # TabGroup multi-screen routing
 zig build run-clipboard_osc52 # OSC 52 clipboard output demo

@@ -6,6 +6,7 @@ const zz = @import("zigzag");
 
 const Tab = enum {
     dashboard,
+    charts,
     data,
     files,
     editor,
@@ -14,6 +15,7 @@ const Tab = enum {
     pub fn name(self: Tab) []const u8 {
         return switch (self) {
             .dashboard => "Dashboard",
+            .charts => "Charts",
             .data => "Data",
             .files => "Files",
             .editor => "Editor",
@@ -35,6 +37,8 @@ const Model = struct {
     progress: zz.Progress,
     timer: zz.components.Timer,
     sparkline: zz.Sparkline,
+    chart: zz.Chart,
+    bars: zz.BarChart,
     notifications: zz.Notification,
     frame_count: u64,
     paused: bool,
@@ -80,6 +84,63 @@ const Model = struct {
 
         self.sparkline = zz.Sparkline.init(ctx.persistent_allocator);
         self.sparkline.setWidth(30);
+        self.sparkline.setGradient(zz.Color.hex("#F97316"), zz.Color.hex("#22C55E"));
+
+        self.chart = zz.Chart.init(ctx.persistent_allocator);
+        self.chart.setSize(52, 18);
+        self.chart.setMarker(.braille);
+        self.chart.setLegendPosition(.top);
+        self.chart.x_axis = .{
+            .title = "Time",
+            .tick_count = 5,
+            .show_grid = true,
+        };
+        self.chart.y_axis = .{
+            .title = "Utilization",
+            .tick_count = 5,
+            .show_grid = true,
+        };
+
+        var cpu = zz.ChartDataset.init(ctx.persistent_allocator, "CPU") catch unreachable;
+        cpu.setStyle((zz.Style{}).fg(zz.Color.cyan()).bold(true));
+        cpu.setShowPoints(true);
+        cpu.setInterpolation(.monotone_cubic);
+        cpu.setInterpolationSteps(10);
+
+        var mem = zz.ChartDataset.init(ctx.persistent_allocator, "Memory") catch unreachable;
+        mem.setStyle((zz.Style{}).fg(zz.Color.magenta()));
+        mem.setInterpolation(.catmull_rom);
+        mem.setInterpolationSteps(10);
+
+        var backlog = zz.ChartDataset.init(ctx.persistent_allocator, "Backlog") catch unreachable;
+        backlog.setStyle((zz.Style{}).fg(zz.Color.yellow()));
+        backlog.setGraphType(.area);
+        backlog.setInterpolation(.step_center);
+        backlog.setFillBaseline(18.0);
+
+        for (0..24) |i| {
+            const x = @as(f64, @floatFromInt(i));
+            cpu.appendPoint(.{ .x = x, .y = 52.0 + @sin(x / 3.0) * 15.0 }) catch unreachable;
+            mem.appendPoint(.{ .x = x, .y = 44.0 + @cos(x / 4.0) * 12.0 }) catch unreachable;
+            backlog.appendPoint(.{ .x = x, .y = 18.0 + @sin(x / 2.6) * 7.0 + 3.0 }) catch unreachable;
+        }
+
+        self.chart.addDataset(cpu) catch unreachable;
+        self.chart.addDataset(mem) catch unreachable;
+        self.chart.addDataset(backlog) catch unreachable;
+
+        self.bars = zz.BarChart.init(ctx.persistent_allocator);
+        self.bars.setSize(32, 12);
+        self.bars.setOrientation(.horizontal);
+        self.bars.show_values = true;
+        self.bars.label_style = (zz.Style{}).fg(zz.Color.gray(18)).inline_style(true);
+        self.bars.positive_style = (zz.Style{}).fg(zz.Color.green()).inline_style(true);
+        self.bars.negative_style = (zz.Style{}).fg(zz.Color.red()).inline_style(true);
+        self.bars.axis_style = (zz.Style{}).fg(zz.Color.gray(10)).inline_style(true);
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "api", 22) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "db", -10) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "queue", 15) catch unreachable) catch unreachable;
+        self.bars.addBar(zz.Bar.init(ctx.persistent_allocator, "cache", 9) catch unreachable) catch unreachable;
 
         self.notifications = zz.Notification.init(ctx.persistent_allocator);
 
@@ -182,7 +243,7 @@ const Model = struct {
         self.show_quit_confirm = false;
 
         self.help = zz.components.Help.init(ctx.persistent_allocator);
-        self.help.addBinding("1-5", "tabs") catch {};
+        self.help.addBinding("1-6", "tabs") catch {};
         self.help.addBinding("Tab", "next tab") catch {};
         self.help.addBinding("Ctrl+Q", "quit") catch {};
 
@@ -205,6 +266,25 @@ const Model = struct {
 
                     // Update sparkline with FPS
                     self.sparkline.push(ctx.fps()) catch {};
+
+                    var cpu = &self.chart.datasets.items[0];
+                    var mem = &self.chart.datasets.items[1];
+                    var backlog = &self.chart.datasets.items[2];
+                    if (cpu.points.items.len >= 32) _ = cpu.points.orderedRemove(0);
+                    if (mem.points.items.len >= 32) _ = mem.points.orderedRemove(0);
+                    if (backlog.points.items.len >= 32) _ = backlog.points.orderedRemove(0);
+
+                    const next_x = if (cpu.points.items.len == 0) 0.0 else cpu.points.items[cpu.points.items.len - 1].x + 1.0;
+                    const phase = @as(f64, @floatFromInt(ctx.elapsed));
+                    cpu.appendPoint(.{ .x = next_x, .y = 52.0 + @sin((phase / 2_000_000.0 + next_x) / 3.0) * 15.0 }) catch {};
+                    mem.appendPoint(.{ .x = next_x, .y = 44.0 + @cos((phase / 2_000_000.0 + next_x) / 4.0) * 12.0 }) catch {};
+                    backlog.appendPoint(.{ .x = next_x, .y = 18.0 + @sin((phase / 2_000_000.0 + next_x) / 2.6) * 7.0 + 3.0 }) catch {};
+                    self.chart.x_axis.bounds = .{ .min = @max(0.0, next_x - 31.0), .max = next_x };
+
+                    self.bars.bars.items[0].value = 20.0 + @sin(phase / 800_000_000.0) * 11.0;
+                    self.bars.bars.items[1].value = -7.0 - @cos(phase / 900_000_000.0) * 8.0;
+                    self.bars.bars.items[2].value = 12.0 + @sin(phase / 700_000_000.0) * 9.0;
+                    self.bars.bars.items[3].value = 8.0 + @cos(phase / 600_000_000.0) * 6.0;
 
                     // Update notifications
                     self.notifications.update(ctx.elapsed);
@@ -250,24 +330,27 @@ const Model = struct {
                 switch (k.key) {
                     .char => |c| switch (c) {
                         '1' => self.active_tab = .dashboard,
-                        '2' => self.active_tab = .data,
-                        '3' => self.active_tab = .files,
-                        '4' => self.active_tab = .editor,
-                        '5' => self.active_tab = .unicode,
+                        '2' => self.active_tab = .charts,
+                        '3' => self.active_tab = .data,
+                        '4' => self.active_tab = .files,
+                        '5' => self.active_tab = .editor,
+                        '6' => self.active_tab = .unicode,
                         else => self.handleTabKey(k),
                     },
                     .tab => {
                         if (k.modifiers.shift) {
                             self.active_tab = switch (self.active_tab) {
                                 .dashboard => .unicode,
-                                .data => .dashboard,
+                                .charts => .dashboard,
+                                .data => .charts,
                                 .files => .data,
                                 .editor => .files,
                                 .unicode => .editor,
                             };
                         } else {
                             self.active_tab = switch (self.active_tab) {
-                                .dashboard => .data,
+                                .dashboard => .charts,
+                                .charts => .data,
                                 .data => .files,
                                 .files => .editor,
                                 .editor => .unicode,
@@ -327,6 +410,7 @@ const Model = struct {
                     else => {},
                 }
             },
+            .charts => {},
             .data => {
                 switch (k.key) {
                     .char => |c| switch (c) {
@@ -395,7 +479,7 @@ const Model = struct {
         var result = std.array_list.Managed(u8).init(ctx.allocator);
         const writer = result.writer();
 
-        const tabs = [_]Tab{ .dashboard, .data, .files, .editor, .unicode };
+        const tabs = [_]Tab{ .dashboard, .charts, .data, .files, .editor, .unicode };
         for (tabs, 0..) |tab, i| {
             if (i > 0) try writer.writeAll("  ");
 
@@ -432,6 +516,7 @@ const Model = struct {
     fn renderActiveTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
         return switch (self.active_tab) {
             .dashboard => self.renderDashboard(ctx),
+            .charts => self.renderChartsTab(ctx),
             .data => self.renderDataTab(ctx),
             .files => self.renderFilesTab(ctx),
             .editor => self.renderEditorTab(ctx),
@@ -628,6 +713,44 @@ const Model = struct {
         return zz.joinVertical(ctx.allocator, &.{ main_row, "", focus_hint });
     }
 
+    fn renderChartsTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        const trend_view = try self.chart.view(ctx.allocator);
+        const bars_view = try self.bars.view(ctx.allocator);
+        const vertical_view = try self.renderVerticalBars(ctx);
+        const canvas_view = try self.renderChartCanvas(ctx);
+
+        var trend_style = zz.Style{};
+        trend_style = trend_style.borderAll(zz.Border.rounded);
+        trend_style = trend_style.borderForeground(zz.Color.cyan());
+        trend_style = trend_style.paddingAll(1);
+
+        var bars_style = zz.Style{};
+        bars_style = bars_style.borderAll(zz.Border.rounded);
+        bars_style = bars_style.borderForeground(zz.Color.green());
+        bars_style = bars_style.paddingAll(1);
+
+        var aux_style = zz.Style{};
+        aux_style = aux_style.borderAll(zz.Border.rounded);
+        aux_style = aux_style.borderForeground(zz.Color.yellow());
+        aux_style = aux_style.paddingAll(1);
+
+        const trend_box = try trend_style.render(ctx.allocator, try self.section(ctx, "Interpolated Lines + Area", trend_view));
+        const bars_box = try bars_style.render(ctx.allocator, try self.section(ctx, "Horizontal Bars", bars_view));
+        const vertical_box = try aux_style.render(ctx.allocator, try self.section(ctx, "Vertical Bars", vertical_view));
+        const canvas_box = try aux_style.render(ctx.allocator, try self.section(ctx, "Canvas Plot", canvas_view));
+
+        const top = try zz.joinHorizontal(ctx.allocator, &.{ trend_box, "  ", bars_box });
+        const bottom = try zz.joinHorizontal(ctx.allocator, &.{ vertical_box, "  ", canvas_box });
+
+        var hint_style = zz.Style{};
+        hint_style = hint_style.fg(zz.Color.gray(10));
+        hint_style = hint_style.italic(true);
+        hint_style = hint_style.inline_style(true);
+        const hint = try hint_style.render(ctx.allocator, "Includes monotone cubic, Catmull-Rom, stepped area, horizontal bars, vertical bars, and braille canvas plotting.");
+
+        return zz.joinVertical(ctx.allocator, &.{ top, "", bottom, "", hint });
+    }
+
     fn renderFilesTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
         const viewport_view = try self.file_viewport.view(ctx.allocator);
 
@@ -645,6 +768,56 @@ const Model = struct {
         const content = try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ header, viewport_view });
 
         return box_style.render(ctx.allocator, content);
+    }
+
+    fn renderVerticalBars(_: *const Model, ctx: *const zz.Context) ![]const u8 {
+        var chart = zz.BarChart.init(ctx.allocator);
+        defer chart.deinit();
+
+        chart.setSize(24, 10);
+        chart.setOrientation(.vertical);
+        chart.show_values = true;
+        chart.label_style = (zz.Style{}).fg(zz.Color.gray(18)).inline_style(true);
+        chart.axis_style = (zz.Style{}).fg(zz.Color.gray(10)).inline_style(true);
+        chart.positive_style = (zz.Style{}).fg(zz.Color.hex("#F97316")).inline_style(true);
+        chart.negative_style = (zz.Style{}).fg(zz.Color.hex("#EF4444")).inline_style(true);
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Mon", 9));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Tue", 13));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Wed", 6));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Thu", -4));
+        try chart.addBar(try zz.Bar.init(ctx.allocator, "Fri", 11));
+        return try chart.view(ctx.allocator);
+    }
+
+    fn renderChartCanvas(self: *const Model, ctx: *const zz.Context) ![]const u8 {
+        _ = self;
+        var canvas = zz.Canvas.init(ctx.allocator);
+        defer canvas.deinit();
+
+        canvas.setSize(24, 10);
+        canvas.setMarker(.braille);
+        canvas.setRanges(.{ .min = -1.2, .max = 1.2 }, .{ .min = -1.2, .max = 1.2 });
+
+        var style = zz.Style{};
+        style = style.fg(zz.Color.yellow());
+        style = style.inline_style(true);
+
+        for (0..64) |i| {
+            const t = @as(f64, @floatFromInt(i)) / 10.0;
+            try canvas.drawPointStyled(@sin(t * 1.5), @cos(t * 2.1), style, null);
+        }
+
+        return try canvas.view(ctx.allocator);
+    }
+
+    fn section(self: *const Model, ctx: *const zz.Context, title: []const u8, body: []const u8) ![]const u8 {
+        _ = self;
+        var header_style = zz.Style{};
+        header_style = header_style.bold(true);
+        header_style = header_style.fg(zz.Color.white());
+        header_style = header_style.inline_style(true);
+        const header = try header_style.render(ctx.allocator, title);
+        return try std.fmt.allocPrint(ctx.allocator, "{s}\n\n{s}", .{ header, body });
     }
 
     fn renderEditorTab(self: *const Model, ctx: *const zz.Context) ![]const u8 {
@@ -776,7 +949,7 @@ const Model = struct {
     fn renderStatusBar(self: *const Model, ctx: *const zz.Context) ![]const u8 {
         _ = self;
         var help_comp = zz.components.Help.init(ctx.allocator);
-        try help_comp.addBinding("1-5", "tabs");
+        try help_comp.addBinding("1-6", "tabs");
         try help_comp.addBinding("Tab", "next");
         try help_comp.addBinding("Ctrl+Q", "quit");
         help_comp.setMaxWidth(ctx.width);
@@ -794,6 +967,8 @@ const Model = struct {
 
     pub fn deinit(self: *Model) void {
         self.sparkline.deinit();
+        self.chart.deinit();
+        self.bars.deinit();
         self.notifications.deinit();
         self.table.deinit();
         self.tree.deinit();
