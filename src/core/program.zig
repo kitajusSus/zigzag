@@ -52,7 +52,7 @@ pub fn Program(comptime Model: type) type {
         context: Context,
         options: Options,
         running: bool,
-        clock: std.time.Timer,
+        io: std.Io,
         start_time: u64,
         last_frame_time: u64,
         pending_tick: ?u64,
@@ -69,15 +69,14 @@ pub fn Program(comptime Model: type) type {
         const Self = @This();
 
         /// Initialize the program
-        pub fn init(allocator: std.mem.Allocator) !Self {
-            return initWithOptions(allocator, .{});
+        pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
+            return initWithOptions(allocator, io, .{});
         }
 
         /// Initialize with custom options
-        pub fn initWithOptions(allocator: std.mem.Allocator, options: Options) !Self {
+        pub fn initWithOptions(allocator: std.mem.Allocator, io: std.Io, options: Options) !Self {
             const arena = std.heap.ArenaAllocator.init(allocator);
-            var clock = try std.time.Timer.start();
-            const now = clock.read();
+            const now = std.Io.Clock.awake.now(io);
             const self = Self{
                 .allocator = allocator,
                 .arena = arena,
@@ -88,7 +87,7 @@ pub fn Program(comptime Model: type) type {
                 .context = Context.init(allocator, allocator),
                 .options = options,
                 .running = false,
-                .clock = clock,
+                .io = io,
                 .start_time = now,
                 .last_frame_time = now,
                 .pending_tick = null,
@@ -187,8 +186,7 @@ pub fn Program(comptime Model: type) type {
             self.context.kitty_text_sizing = width_caps.kitty_text_sizing;
             unicode.setWidthStrategy(effective_width_strategy);
 
-            self.clock.reset();
-            self.start_time = self.clock.read();
+            self.start_time = std.Io.Clock.awake.now(self.io);
             self.last_frame_time = self.start_time;
             self.context.elapsed = 0;
             self.context.delta = 0;
@@ -210,7 +208,7 @@ pub fn Program(comptime Model: type) type {
 
         /// Execute a single frame: poll input, process events, render.
         pub fn tick(self: *Self) !void {
-            const now = self.clock.read();
+            const now = std.Io.Clock.awake.now(self.io);
             const delta = now - self.last_frame_time;
 
             // Enforce framerate limit
@@ -223,7 +221,7 @@ pub fn Program(comptime Model: type) type {
                 sleepNs(min_frame_time_ns - delta);
             }
 
-            const frame_time = self.clock.read();
+            const frame_time = std.Io.Clock.awake.now(self.io);
             const actual_delta = frame_time - self.last_frame_time;
             self.last_frame_time = frame_time;
 
@@ -388,7 +386,6 @@ pub fn Program(comptime Model: type) type {
         fn performSuspend(self: *Self) void {
             if (builtin.os.tag == .windows) return;
 
-            // Cleanup terminal
             if (self.terminal) |*term| {
                 term.cleanup();
             }
@@ -405,7 +402,7 @@ pub fn Program(comptime Model: type) type {
             }
 
             // Avoid a large post-resume frame delta.
-            self.last_frame_time = self.clock.read();
+            self.last_frame_time = std.Io.Clock.awake.now(self.io);
 
             // Force re-render
             self.last_view_hash = 0;
@@ -741,7 +738,7 @@ pub fn Program(comptime Model: type) type {
             if (value > max_i32) value = max_i32;
             return @intCast(value);
         }
-
+        /// https://codeberg.org/ziglang/zig/src/commit/922ab8b8bc3b6dc14da9393b65ca2601f9a82728/lib/std/Io.zig
         fn sleepNs(nanoseconds: u64) void {
             if (nanoseconds == 0) return;
             const ns_per_s: u64 = if (@hasDecl(std.time, "ns_per_s")) std.time.ns_per_s else 1_000_000_000;
@@ -787,10 +784,23 @@ pub fn Program(comptime Model: type) type {
             }
 
             // Last resort: spin for the requested duration.
-            var timer = std.time.Timer.start() catch return;
-            const start_ns = timer.read();
-            while (timer.read() - start_ns < nanoseconds) {
-                std.atomic.spinLoopHint();
+            if (@hasDecl(std, "Io") and @hasDecl(std.Io, "Clock")) {
+                // Zig 0.16.dev path
+                var threaded_io: std.Io.Threaded = .init_single_threaded;
+                const io = threaded_io.io();
+                const start_ns = std.Io.Clock.awake.now(io);
+
+                while (std.Io.Clock.awake.now(io) - start_ns < nanoseconds) {
+                    std.atomic.spinLoopHint();
+                }
+            } else if (@hasDecl(std, "time") and @hasDecl(std.time, "Timer")) {
+                // Zig <= 0.15 path
+                var timer = std.time.Timer.start() catch return;
+                const start_ns = timer.read();
+
+                while (timer.read() - start_ns < nanoseconds) {
+                    std.atomic.spinLoopHint();
+                }
             }
         }
 

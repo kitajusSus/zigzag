@@ -249,8 +249,11 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    var prog = try zz.Program(Model).init(gpa.allocator());
-    defer prog.deinit();
+    var threaded_io: std.Io.Threaded = .init_single_threaded;
+    const io = threaded_io.io();
 
-    try prog.run();
+    var program = try zz.Program(Model).init(gpa.allocator(), io);
+    defer program.deinit();
+
+    try program.run();
 }

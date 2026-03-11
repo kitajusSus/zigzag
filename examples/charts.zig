@@ -308,12 +308,15 @@ fn inlineStat(ctx: *const zz.Context, label: []const u8, value: []const u8) ![]c
 
     return try std.fmt.allocPrint(ctx.allocator, "{s}: {s}", .{ rendered_label, rendered_value });
 }
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    var program = try zz.Program(Model).init(gpa.allocator());
+    var threaded_io: std.Io.Threaded = .init_single_threaded;
+    const io = threaded_io.io();
+
+    var program = try zz.Program(Model).init(gpa.allocator(), io);
     defer program.deinit();
+
     try program.run();
 }

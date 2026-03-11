@@ -245,9 +245,9 @@ pub const Config = struct {
     /// Enable bracketed paste mode
     bracketed_paste: bool = true,
     /// Custom input file (default: stdin)
-    input: ?std.fs.File = null,
+    input: ?std.Io.File = null,
     /// Custom output file (default: stdout)
-    output: ?std.fs.File = null,
+    output: ?std.Io.File = null,
     /// Enable Kitty keyboard protocol
     kitty_keyboard: bool = false,
     /// OSC 52 clipboard configuration
@@ -258,8 +258,8 @@ pub const Config = struct {
 pub const Terminal = struct {
     state: platform.State,
     config: Config,
-    stdout: std.fs.File,
-    stdin: std.fs.File,
+    stdout: std.Io.File,
+    stdin: std.Io.File,
     write_buffer: [4096]u8 = undefined,
     write_pos: usize = 0,
     pending_input: [8192]u8 = undefined,
@@ -268,8 +268,8 @@ pub const Terminal = struct {
     image_caps: ImageCapabilities = .{},
 
     pub fn init(config: Config) !Terminal {
-        const stdout = config.output orelse std.fs.File.stdout();
-        const stdin = config.input orelse std.fs.File.stdin();
+        const stdout = config.output orelse std.Io.File.stdout();
+        const stdin = config.input orelse std.Io.File.stdin();
 
         var state = platform.State.init();
         // Apply custom fd overrides
@@ -1240,7 +1240,7 @@ pub const Terminal = struct {
         }
     }
 
-    fn sendIterm2InlineImagePayload(self: *Terminal, params: []const u8, file: *std.fs.File, file_size: u64) !void {
+    fn sendIterm2InlineImagePayload(self: *Terminal, params: []const u8, file: *std.Io.File, file_size: u64) !void {
         const encoder = std.base64.standard.Encoder;
         var raw_buf: [3072]u8 = undefined;
         var b64_buf: [4096]u8 = undefined;
@@ -1328,7 +1328,7 @@ pub const Terminal = struct {
         try self.writeBytes(ansi.OSC ++ "1337;FileEnd\x07");
     }
 
-    fn sendSixelPayloadFromFile(self: *Terminal, file: *std.fs.File) !void {
+    fn sendSixelPayloadFromFile(self: *Terminal, file: *std.Io.File) !void {
         var payload_buf: [4096]u8 = undefined;
         var first_read = true;
         var wrapped = false;
