@@ -254,9 +254,9 @@ pub fn Table(comptime num_cols: usize) type {
 
         /// Render the table
         pub fn view(self: *const Self, allocator: std.mem.Allocator) ![]const u8 {
-            var result = std.array_list.Managed(u8).init(allocator);
-            const writer = result.writer();
-
+            var w: std.Io.Writer.Allocating = .init(allocator);
+            errdefer w.deinit();
+            const writer = &w.interface;
             const widths = self.calculateWidths();
 
             // Top border
@@ -312,13 +312,15 @@ pub fn Table(comptime num_cols: usize) type {
                     try writer.writeByte('\n');
                 }
             }
-
-            // Bottom border
+            // bottom border zig 0.16 changed the behavior of trailing newlines
+            // in allocating writers, so we need to ensure we don't add an extra
+            // newline if the table is empty or if the last row already ends with a newline.
             if (self.show_border) {
                 try self.writeBorderLine(writer, allocator, widths, .bottom);
             }
 
-            return result.toOwnedSlice();
+            var array_list = w.toArrayList();
+            return try array_list.toOwnedSlice();
         }
 
         fn writeRow(

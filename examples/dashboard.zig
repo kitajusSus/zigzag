@@ -260,12 +260,11 @@ const Model = struct {
         return box_style.render(ctx.allocator, content);
     }
 };
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-
-    var program = try zz.Program(Model).init(gpa.allocator());
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+    var program = try zz.Program(Model).init(gpa.allocator, io);
     defer program.deinit();
 
     try program.run();

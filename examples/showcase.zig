@@ -578,15 +578,12 @@ const Model = struct {
         const sparkline_row = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ spark_label, sparkline_view });
 
         // Spinner
-        const spinner_view = if (self.progress.isComplete())
-            blk: {
-                var done_style = zz.Style{};
-                done_style = done_style.fg(zz.Color.green());
-                done_style = done_style.inline_style(true);
-                break :blk try done_style.render(ctx.allocator, "* All tasks complete!");
-            }
-        else
-            try self.spinner.viewWithTitle(ctx.allocator, "Processing...");
+        const spinner_view = if (self.progress.isComplete()) blk: {
+            var done_style = zz.Style{};
+            done_style = done_style.fg(zz.Color.green());
+            done_style = done_style.inline_style(true);
+            break :blk try done_style.render(ctx.allocator, "* All tasks complete!");
+        } else try self.spinner.viewWithTitle(ctx.allocator, "Processing...");
 
         // Notifications
         const notif_view = try self.notifications.view(ctx.allocator);
@@ -1066,11 +1063,8 @@ const Model = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-
-    var program = try zz.Program(Model).initWithOptions(gpa.allocator(), .{
-        .mouse = true,
-        .title = "ZigZag Showcase",
-    });
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+    var program = try zz.Program(Model).init(gpa.allocator, io);
     defer program.deinit();
 
     try program.run();

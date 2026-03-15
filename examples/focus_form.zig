@@ -214,13 +214,12 @@ const Model = struct {
         self.message_input.deinit();
     }
 };
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
+    var program = try zz.Program(Model).init(gpa.allocator, io);
+    defer program.deinit();
 
-    var prog = try zz.Program(Model).init(gpa.allocator());
-    defer prog.deinit();
-
-    try prog.run();
+    try program.run();
 }
