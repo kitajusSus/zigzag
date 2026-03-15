@@ -31,11 +31,9 @@ const Model = struct {
     pub fn update(self: *Model, m: Msg, ctx: *zz.Context) zz.Cmd(Msg) {
         switch (m) {
             .key => |k| {
-                // If modal is visible, let it handle keys
                 if (self.modal.isVisible()) {
                     self.modal.handleKey(k);
 
-                    // Check for result
                     if (self.modal.getResult()) |res| {
                         self.last_result = switch (res) {
                             .button_pressed => |idx| std.fmt.allocPrint(
@@ -111,12 +109,10 @@ const Model = struct {
     pub fn view(self: *const Model, ctx: *const zz.Context) []const u8 {
         const alloc = ctx.allocator;
 
-        // If modal is visible, render it with backdrop
         if (self.modal.isVisible()) {
             return self.modal.viewWithBackdrop(alloc, ctx.width, ctx.height) catch "Error";
         }
 
-        // Main view
         var title_s = zz.Style{};
         title_s = title_s.bold(true).fg(zz.Color.hex("#FF6B6B")).inline_style(true);
 
@@ -142,11 +138,15 @@ const Model = struct {
     }
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const io = std.Io.Threaded.global_single_threaded.ioBasic();
-    var program = try zz.Program(Model).init(gpa.allocator, io);
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+
+    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });
+    defer threaded.deinit();
+
+    const io = threaded.io();
+
+    var program = try zz.Program(Model).init(allocator, io);
     defer program.deinit();
 
     try program.run();

@@ -67,7 +67,7 @@ pub const Context = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, persistent_allocator: std.mem.Allocator) Context {
-        const profile = color_mod.ColorProfile.detect();
+        const profile = color_mod.ColorProfile.detect(allocator);
         return .{
             .allocator = allocator,
             .persistent_allocator = persistent_allocator,

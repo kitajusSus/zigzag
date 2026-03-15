@@ -184,11 +184,14 @@ const Model = struct {
     }
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    var program = try zz.Program(Model).initWithOptions(gpa.allocator(), .{
+    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var program = try zz.Program(Model).initWithOptions(allocator, io, .{
         .title = "ZigZag OSC 52 Clipboard",
         .osc52 = .{
             .enabled = true,

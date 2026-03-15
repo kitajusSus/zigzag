@@ -288,11 +288,12 @@ const Model = struct {
     }
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-
-    var program = try zz.Program(Model).init(gpa.allocator());
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = init.minimal.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+    var program = try zz.Program(Model).init(allocator, io);
     defer program.deinit();
 
     try program.run();

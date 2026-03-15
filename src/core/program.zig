@@ -53,7 +53,7 @@ pub fn Program(comptime Model: type) type {
         options: Options,
         running: bool,
         io: std.Io,
-        start_time: u64,
+        start_time: std.Io.Timestamp, //here
         last_frame_time: u64,
         pending_tick: ?u64,
         every_interval: ?u64,
