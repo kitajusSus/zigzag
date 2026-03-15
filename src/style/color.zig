@@ -281,30 +281,33 @@ pub const ColorProfile = enum {
     true_color,
 
     /// Detect terminal color profile from environment
-    pub fn detect() ColorProfile {
+    pub fn detect(allocator: std.mem.Allocator) ColorProfile {
         if (comptime builtin.os.tag == .windows) {
             // Windows Terminal supports true color VT sequences
             return .true_color;
         }
 
         // Check NO_COLOR
-        if (std.posix.getenv("NO_COLOR")) |_| {
+        if (std.process.getEnvVarOwned(allocator, "NO_COLOR")) |val| {
+            allocator.free(val);
             return .ascii;
-        }
+        } else |_| {}
 
         // Check for true color support
-        if (std.posix.getenv("COLORTERM")) |ct| {
+        if (std.process.getEnvVarOwned(allocator, "COLORTERM")) |ct| {
+            defer allocator.free(ct);
             if (std.mem.eql(u8, ct, "truecolor") or std.mem.eql(u8, ct, "24bit")) {
                 return .true_color;
             }
-        }
+        } else |_| {}
 
         // Check for 256 color support
-        if (std.posix.getenv("TERM")) |term| {
+        if (std.process.getEnvVarOwned(allocator, "TERM")) |term| {
+            defer allocator.free(term);
             if (std.mem.indexOf(u8, term, "256color") != null) {
                 return .ansi256;
             }
-        }
+        } else |_| {}
 
         return .ansi;
     }
@@ -326,12 +329,13 @@ pub const ColorProfile = enum {
 };
 
 /// Detect if terminal has a dark background
-pub fn hasDarkBackground() bool {
+pub fn hasDarkBackground(allocator: std.mem.Allocator) bool {
     if (comptime builtin.os.tag == .windows) {
         return true;
     }
 
-    if (std.posix.getenv("COLORFGBG")) |val| {
+    if (std.process.getEnvVarOwned(allocator, "COLORFGBG")) |val| {
+        defer allocator.free(val);
         // Format: "foreground;background"
         if (std.mem.lastIndexOfScalar(u8, val, ';')) |idx| {
             const bg_str = val[idx + 1 ..];
@@ -339,6 +343,7 @@ pub fn hasDarkBackground() bool {
             // Low numbers typically mean dark background
             return bg_num < 8;
         }
-    }
+    } else |_| {}
+
     return true; // Default to dark
 }
